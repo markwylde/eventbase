@@ -2,6 +2,7 @@ import type { Event, EventbaseConfig } from './types.js';
 import type { Level } from 'level';
 import { createDb } from './db.js';
 import { setupNats } from './nats.js';
+import { JetStreamClient } from '@nats-io/jetstream';
 
 type Stream = {
   waitUntilReady: () => Promise<void>;
@@ -10,7 +11,7 @@ type Stream = {
 
 export async function createEventbase(config: EventbaseConfig) {
   const db = await createDb(config.streamName);
-  const { nc, js } = await setupNats(config.streamName, config.servers);
+  const { nc, js, jsm } = await setupNats(config.streamName, config.servers);
 
   // Replay all events from stream to rebuild state
   const stream = await replayEvents(config.streamName, js, db);
@@ -22,16 +23,14 @@ export async function createEventbase(config: EventbaseConfig) {
     get: (id: string) => get(id, db),
     delete: (id: string) => delete_(id, config.streamName, js, db),
     close: async () => {
-      stream.stop();
-      await Promise.all([
-        db.close(),
-        nc.close()
-      ]);
+      await stream.stop();
+      await db.close();
+      await nc.close();
     }
   };
 }
 
-async function replayEvents(streamName: string, js: any, db: Level): Promise<Stream> {
+async function replayEvents(streamName: string, js: JetStreamClient, db: Level): Promise<Stream> {
   let isReady = false;
   let isStopped = false;
   let resolve: () => void;
@@ -57,7 +56,7 @@ async function replayEvents(streamName: string, js: any, db: Level): Promise<Str
   // Start processing messages
   (async () => {
     for await (const msg of messages) {
-      const event: Event = JSON.parse(msg.data.toString());
+      const event: Event = JSON.parse(msg.string());
 
       if (event.type === 'PUT') {
         await db.put(event.id, event.data);
@@ -67,18 +66,16 @@ async function replayEvents(streamName: string, js: any, db: Level): Promise<Str
 
       lastMessageTime = Date.now();
       msg.ack();
-
-      if (isStopped) {
-        break;
-      }
     }
   })();
 
   return {
     waitUntilReady: () => readyPromise,
-    stop: () => {
-      clearInterval(checkIfReady);
+    stop: async () => {
       isStopped = true;
+      clearInterval(checkIfReady);
+      await messages.close();
+      await consumer.delete();
     }
   };
 }

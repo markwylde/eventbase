@@ -4,7 +4,7 @@ import { rm } from 'fs/promises';
 import { tmpdir } from 'os';
 
 export async function createDb(streamName: string) {
-  const dbPath = join(tmpdir(), `level-${streamName}-${Date.now()}`);
+  const dbPath = join(tmpdir(), `level-${streamName}-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`);
 
   // Delete existing DB (just in case)
   try {

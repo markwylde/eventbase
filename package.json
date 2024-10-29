@@ -8,7 +8,7 @@
     "start": "tsx demo/index.ts",
     "build": "tsc",
     "dev": "tsx --watch demo/index.ts",
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "tsx --test test/*.test.ts",
     "prepublishOnly": "npm run build"
   },
   "keywords": [

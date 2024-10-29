@@ -27,7 +27,6 @@ import createEventbase from '@markwylde/eventbase';
 
 // Initialize eventbase
 const eventbase = await createEventbase({
-  nodeName: 'node1',
   streamName: 'mytodoapp',
   servers: ["localhost:4442", "localhost:4443"]
 });
@@ -53,7 +52,6 @@ await eventbase.close();
 Creates a new Eventbase instance.
 
 #### Config Options:
-- `nodeName`: Unique identifier for this node
 - `streamName`: Name of the NATS stream to use
 - `servers`: Array of NATS server addresses
 
