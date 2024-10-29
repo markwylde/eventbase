@@ -25,27 +25,25 @@ npm install @markwylde/eventbase
 ```typescript
 import createEventbase from '@markwylde/eventbase';
 
-async function main() {
-  // Initialize eventbase
-  const eventbase = await createEventbase({
-    nodeName: 'node1',
-    streamName: 'mytodoapp',
-    servers: ["localhost:4442", "localhost:4443"]
-  });
+// Initialize eventbase
+const eventbase = await createEventbase({
+  nodeName: 'node1',
+  streamName: 'mytodoapp',
+  servers: ["localhost:4442", "localhost:4443"]
+});
 
-  // Store data
-  await eventbase.put('user123', { name: 'John Doe' });
+// Store data
+await eventbase.put('user123', { name: 'John Doe' });
 
-  // Retrieve data
-  const user = await eventbase.get('user123');
-  console.log(user); // { name: 'John Doe' }
+// Retrieve data
+const user = await eventbase.get('user123');
+console.log(user); // { name: 'John Doe' }
 
-  // Delete data
-  await eventbase.delete('user123');
+// Delete data
+await eventbase.delete('user123');
 
-  // Close connection
-  await eventbase.close();
-}
+// Close connection
+await eventbase.close();
 ```
 
 ## API

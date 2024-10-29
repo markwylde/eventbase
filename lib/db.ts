@@ -1,11 +1,12 @@
 import { Level } from 'level';
 import { join } from 'path';
 import { rm } from 'fs/promises';
+import { tmpdir } from 'os';
 
 export async function createDb(streamName: string) {
-  const dbPath = join(process.cwd(), `data/${streamName}-db`);
+  const dbPath = join(tmpdir(), `level-${streamName}-${Date.now()}`);
 
-  // Delete existing DB
+  // Delete existing DB (just in case)
   try {
     await rm(dbPath, { recursive: true, force: true });
   } catch (err) {
