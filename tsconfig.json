@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",  // or a later version like "ES2020"
+    "lib": ["ESNext"],  // Include necessary libraries
+    "moduleDetection": "force",
+    "module": "Preserve",  // Use "ESNext" instead of "Preserve" for better module support
+    "allowJs": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "outDir": "dist",
+    "strict": true,  // Enable strict type-checking
+    "skipLibCheck": true,  // Skip type checking of declaration files
+    "forceConsistentCasingInFileNames": true
+  },
+  "exclude": ["node_modules"],
+  "include": ["lib", "tests"]
+}

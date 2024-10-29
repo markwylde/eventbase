@@ -1,0 +1,28 @@
+{
+  "name": "eventbase",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "demo/index.ts",
+  "scripts": {
+    "start": "tsx demo/index.ts",
+    "dev": "tsx --watch demo/index.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": {
+    "email": "mark@wylde.net",
+    "name": "Mark Wylde",
+    "url": "https://github.com/markwylde"
+  },
+  "license": "MIT",
+  "description": "",
+  "dependencies": {
+    "@nats-io/jetstream": "^3.0.0-18",
+    "@nats-io/transport-node": "^3.0.0-12",
+    "level": "^8.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.8.2",
+    "typescript": "^5.6.3"
+  }
+}
