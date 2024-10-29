@@ -1,7 +1,7 @@
 {
   "name": "@markwylde/eventbase",
   "private": false,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "main": "lib/index.js",
   "scripts": {
@@ -12,7 +12,12 @@
     "prepublishOnly": "npm run build"
   },
   "keywords": [
-    "event sourcing", "keyvalue", "kvdb", "database", "nats", "jetstream"
+    "event sourcing",
+    "keyvalue",
+    "kvdb",
+    "database",
+    "nats",
+    "jetstream"
   ],
   "author": {
     "email": "mark@wylde.net",
