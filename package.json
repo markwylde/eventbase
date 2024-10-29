@@ -2,9 +2,10 @@
   "name": "eventbase",
   "version": "1.0.0",
   "type": "module",
-  "main": "demo/index.ts",
+  "main": "lib/index.js",
   "scripts": {
     "start": "tsx demo/index.ts",
+    "build": "tsc",
     "dev": "tsx --watch demo/index.ts",
     "test": "echo \"Error: no test specified\" && exit 1"
   },

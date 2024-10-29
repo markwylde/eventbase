@@ -7,11 +7,11 @@
     "allowJs": true,
     "esModuleInterop": true,
     "isolatedModules": true,
-    "outDir": "dist",
+    "outDir": "lib",
     "strict": true,  // Enable strict type-checking
     "skipLibCheck": true,  // Skip type checking of declaration files
     "forceConsistentCasingInFileNames": true
   },
   "exclude": ["node_modules"],
-  "include": ["lib", "tests"]
+  "include": ["src", "tests"]
 }
