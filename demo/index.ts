@@ -1,4 +1,4 @@
-import createEventbase from '../lib/index';
+import createEventbase from '../src/index';
 
 async function main() {
   const eventbase = await createEventbase({

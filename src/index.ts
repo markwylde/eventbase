@@ -1,7 +1,7 @@
-import type { Event, EventbaseConfig } from './types';
+import type { Event, EventbaseConfig } from './types.js';
 import type { Level } from 'level';
-import { createDb } from './db';
-import { setupNats } from './nats';
+import { createDb } from './db.js';
+import { setupNats } from './nats.js';
 
 type Stream = {
   waitUntilReady: () => Promise<void>;

@@ -1,10 +1,8 @@
 import { ConnectionOptions, connect } from "@nats-io/transport-node";
 import { jetstream, jetstreamManager } from "@nats-io/jetstream";
 
-export async function setupNats(streamName: string, servers: string[]) {
-  const nc = await connect({
-    servers: servers
-  } as ConnectionOptions);
+export async function setupNats(streamName: string, servers: ConnectionOptions) {
+  const nc = await connect(servers);
   const js = jetstream(nc);
   const jsm = await jetstreamManager(nc);
 
