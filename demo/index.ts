@@ -2,7 +2,6 @@ import createEventbase from '../src/index';
 
 async function main() {
   const eventbase = await createEventbase({
-    nodeName: 'node1',
     streamName: 'mytodoapp',
     servers: ["localhost:4442", "localhost:4443"]
   });

@@ -1,7 +1,6 @@
 import { ConnectionOptions } from "@nats-io/transport-node";
 
 export type EventbaseConfig = {
-  nodeName: string;
   streamName: string;
   servers: ConnectionOptions;
 };
