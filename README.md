@@ -82,6 +82,9 @@ The local state is automatically rebuilt from the event log on startup.
 ## Development
 
 ```bash
+# Start a local nats cluster
+docker compose up -d
+
 # Install dependencies
 npm install
 

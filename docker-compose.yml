@@ -1,0 +1,26 @@
+services:
+  nats-dev-1:
+    image: nats:2.10-alpine
+    command: -js -sd /data -n nats-dev-1 --cluster_name nats-dev -cluster nats://0.0.0.0:6222 -routes nats://nats-dev-2:6222 -p 4222 -m 8222
+    volumes:
+      - "./data/nats-1:/data"
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    networks:
+      - nats-network
+
+  nats-dev-2:
+    image: nats:2.10-alpine
+    command: -js -sd /data -n nats-dev-2 --cluster_name nats-dev -cluster nats://0.0.0.0:6222 -routes nats://nats-dev-1:6222 -p 4223 -m 8223
+    volumes:
+      - "./data/nats-2:/data"
+    ports:
+      - "4223:4223"
+      - "8223:8223"
+    networks:
+      - nats-network
+
+networks:
+  nats-network:
+    driver: bridge
