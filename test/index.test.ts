@@ -8,7 +8,7 @@ describe('Eventbase', async () => {
   let eventbase2;
 
   beforeEach(async () => {
-    const streamName = `test-${Date.now()}`;
+    const streamName = `test-${Date.now()}-${Math.random().toString(36).substring(7)}`;
     [eventbase1, eventbase2] = await Promise.all([
       createEventbase({
         servers: ['localhost:4222'],
