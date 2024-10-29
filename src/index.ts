@@ -1,4 +1,4 @@
-import type { EventbaseConfig } from './types';
+import type { Event, EventbaseConfig } from './types';
 import type { Level } from 'level';
 import { createDb } from './db';
 import { setupNats } from './nats';
