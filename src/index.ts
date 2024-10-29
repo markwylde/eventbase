@@ -56,7 +56,7 @@ async function replayEvents(streamName: string, js: JetStreamClient, db: Level):
   // Start processing messages
   (async () => {
     for await (const msg of messages) {
-      const event: Event = JSON.parse(msg.data.toString());
+      const event: Event = JSON.parse(msg.string());
 
       if (event.type === 'PUT') {
         await db.put(event.id, event.data);
