@@ -2,7 +2,7 @@ import { ConnectionOptions } from "@nats-io/transport-node";
 
 export type EventbaseConfig = {
   streamName: string;
-  servers: ConnectionOptions;
+  nats: ConnectionOptions
 };
 
 export type Event = {

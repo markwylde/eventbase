@@ -28,7 +28,9 @@ import createEventbase from '@markwylde/eventbase';
 // Initialize eventbase
 const eventbase = await createEventbase({
   streamName: 'mytodoapp',
-  servers: ["localhost:4442", "localhost:4443"]
+  nats: {
+    servers: ["localhost:4442", "localhost:4443"]
+  }
 });
 
 // Store data

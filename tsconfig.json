@@ -10,7 +10,8 @@
     "outDir": "lib",
     "strict": true,  // Enable strict type-checking
     "skipLibCheck": true,  // Skip type checking of declaration files
-    "forceConsistentCasingInFileNames": true
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true
   },
   "exclude": ["node_modules"],
   "include": ["src", "tests"]

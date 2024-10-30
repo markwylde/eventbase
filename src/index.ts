@@ -13,7 +13,7 @@ type SubscriptionCallback = (key: string, data: any) => void;
 
 export async function createEventbase(config: EventbaseConfig) {
   const db = await createDb(config.streamName);
-  const { nc, js, jsm } = await setupNats(config.streamName, config.servers);
+  const { nc, js, jsm } = await setupNats(config.streamName, config.nats);
 
   const subscriptions = new Map<string, SubscriptionCallback[]>();
 
