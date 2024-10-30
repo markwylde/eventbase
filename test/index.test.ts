@@ -1,4 +1,3 @@
-// test/index.test.js
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import createEventbase from '../src/index.js';
@@ -50,14 +49,11 @@ describe('Eventbase', async () => {
   test('should sync data between instances', async (t) => {
     // Add delay helper
     const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-
     // Store data in first instance
     const testData = { name: 'John Doe', age: 30 };
     await eventbase1.put('user3', testData);
-
     // Wait for sync
     await delay(1000);
-
     // Verify data in second instance
     const result = await eventbase2.get('user3');
     assert.deepEqual(result, testData);
@@ -70,9 +66,7 @@ describe('Eventbase', async () => {
         eventbase1.put(`key${i}`, { value: i })
       );
     }
-
     await Promise.all(operations);
-
     // Verify all operations succeeded
     for (let i = 0; i < 10; i++) {
       const result = await eventbase1.get(`key${i}`);
@@ -103,5 +97,14 @@ describe('Eventbase', async () => {
     await eventbase1.put(specialKey, testData);
     const result = await eventbase1.get(specialKey);
     assert.deepEqual(result, testData);
+  });
+
+  test('should filter keys based on pattern', async () => {
+    await eventbase1.put('something:1', { value: 1 });
+    await eventbase1.put('something:2', { value: 2 });
+    await eventbase1.put('other:1', { value: 3 });
+
+    const keys = await eventbase1.keys('something:*');
+    assert.deepEqual(keys.sort(), ['something:1', 'something:2'].sort());
   });
 });
