@@ -10,7 +10,7 @@ async function main() {
 
   // Use the eventbase
   await eventbase.put('testid', { a: 1 });
-  const data = await eventbase.get('testid'); // { a: 1 }
+  const data = await eventbase.get<{ a: number }>('testid'); // { a: 1 }
   await eventbase.delete('testid');
 
   console.log('DATA', data);
