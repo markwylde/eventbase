@@ -57,20 +57,51 @@ Creates a new Eventbase instance.
 
 ### Methods
 
+### `subscribe(filter: string, callback: function)`
+Returns an array of keys that match the given filter.
+
+```js
+const unsubscribe = eventbase.subscribe('user:*', (key, data) => {
+  console.log(`User ${key} updated:`, data);
+});
+unsubscribe();
+```
+
 ### `keys(filter: string)`
 Returns an array of keys that match the given filter.
+
+```js
+await eventbase.put('user456', { name: 'Jane Smith' });
+```
 
 #### `put(id: string, data: any)`
 Stores data with the given ID.
 
+```js
+await eventbase.put('user123', { name: 'John Doe' });
+```
+
 #### `get(id: string)`
 Retrieves data for the given ID. Returns null if not found.
+
+```js
+const user = await eventbase.get('user123');
+console.log(user); // { name: 'John Doe' }
+```
 
 #### `delete(id: string)`
 Deletes data with the given ID.
 
+```js
+await eventbase.delete('user123');
+```
+
 #### `close()`
 Closes all connections and cleans up resources.
+
+```js
+await eventbase.close();
+```
 
 ## Storage
 
