@@ -3,7 +3,9 @@ import createEventbase from '../src/index';
 async function main() {
   const eventbase = await createEventbase({
     streamName: 'mytodoapp',
-    servers: ["localhost:4442", "localhost:4443"]
+    nats: {
+      servers: ["localhost:4442", "localhost:4443"]
+    }
   });
 
   // Use the eventbase
