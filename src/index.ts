@@ -22,7 +22,7 @@ export async function createEventbase(config: EventbaseConfig) {
   await stream.waitUntilReady();
 
   return {
-    put: (id: string, data: any) => put(id, data, config.streamName, js, db),
+    put: (id: string, data: object) => put(id, data, config.streamName, js, db),
     get: (id: string) => get(id, db),
     delete: (id: string) => delete_(id, config.streamName, js, db),
     keys: (pattern: string) => keys(pattern, db),
@@ -44,7 +44,7 @@ export async function createEventbase(config: EventbaseConfig) {
   };
 }
 
-async function replayEvents(streamName: string, js: JetStreamClient, db: Level, subscriptions: Map<string, SubscriptionCallback[]>): Promise<Stream> {
+async function replayEvents(streamName: string, js: JetStreamClient, db: Level<string, object>, subscriptions: Map<string, SubscriptionCallback[]>): Promise<Stream> {
   let isReady = false;
   let isStopped = false;
   let resolve: () => void;
@@ -107,7 +107,7 @@ function keyMatchesFilter(key: string, filter: string): boolean {
   return regex.test(key);
 }
 
-async function put(id: string, data: any, streamName: string, js: any, db: Level) {
+async function put(id: string, data: object, streamName: string, js: any, db: Level<string, object>) {
   const event: Event = {
     type: 'PUT',
     id,
@@ -124,7 +124,7 @@ async function put(id: string, data: any, streamName: string, js: any, db: Level
   return data;
 }
 
-async function get(id: string, db: Level) {
+async function get(id: string, db: Level<string, object>) : Promise<object | null> {
   try {
     return await db.get(id);
   } catch (err: any) {
@@ -133,7 +133,7 @@ async function get(id: string, db: Level) {
   }
 }
 
-async function delete_(id: string, streamName: string, js: any, db: Level) {
+async function delete_(id: string, streamName: string, js: any, db: Level<string, object>) {
   const event: Event = {
     type: 'DELETE',
     id,
@@ -148,7 +148,7 @@ async function delete_(id: string, streamName: string, js: any, db: Level) {
   await db.del(id);
 }
 
-async function keys(pattern: string, db: Level) {
+async function keys(pattern: string, db: Level<string, object>) {
   const keys: string[] = [];
   for await (const key of db.keys()) {
     if (key.match(pattern)) {

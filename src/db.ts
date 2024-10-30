@@ -14,7 +14,7 @@ export async function createDb(streamName: string) {
   }
 
   // Create fresh DB
-  const db = new Level(dbPath, { valueEncoding: 'json' });
+  const db = new Level<string, object>(dbPath, { valueEncoding: 'json' });
   await db.open();
 
   return db;
