@@ -15,13 +15,13 @@ export async function createEventbase(config: EventbaseConfig) {
 
   // Replay all events from stream to rebuild state
   const stream = await replayEvents(config.streamName, js, db);
-
   await stream.waitUntilReady();
 
   return {
     put: (id: string, data: any) => put(id, data, config.streamName, js, db),
     get: (id: string) => get(id, db),
     delete: (id: string) => delete_(id, config.streamName, js, db),
+    keys: (pattern: string) => keys(pattern, db),
     close: async () => {
       await stream.stop();
       await db.close();
@@ -57,13 +57,11 @@ async function replayEvents(streamName: string, js: JetStreamClient, db: Level):
   (async () => {
     for await (const msg of messages) {
       const event: Event = JSON.parse(msg.string());
-
       if (event.type === 'PUT') {
         await db.put(event.id, event.data);
       } else if (event.type === 'DELETE') {
         await db.del(event.id);
       }
-
       lastMessageTime = Date.now();
       msg.ack();
     }
@@ -119,6 +117,16 @@ async function delete_(id: string, streamName: string, js: any, db: Level) {
   );
 
   await db.del(id);
+}
+
+async function keys(pattern: string, db: Level) {
+  const keys: string[] = [];
+  for await (const key of db.keys()) {
+    if (key.match(pattern)) {
+      keys.push(key);
+    }
+  }
+  return keys;
 }
 
 export default createEventbase;

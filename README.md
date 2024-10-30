@@ -57,6 +57,9 @@ Creates a new Eventbase instance.
 
 ### Methods
 
+### `keys(filter: string)`
+Returns an array of keys that match the given filter.
+
 #### `put(id: string, data: any)`
 Stores data with the given ID.
 
