@@ -29,7 +29,7 @@
   "description": "",
   "dependencies": {
     "@nats-io/jetstream": "^3.0.0-18",
-    "@nats-io/transport-node": "^3.0.0-12",
+    "@nats-io/transport-node": "^3.0.0-17",
     "level": "^8.0.1"
   },
   "devDependencies": {
