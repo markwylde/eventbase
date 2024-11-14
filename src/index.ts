@@ -9,7 +9,7 @@ type Stream = {
   stop: () => void;
 };
 
-type SubscriptionCallback<T extends object> = (key: string, data: T | null) => void;
+type SubscriptionCallback<T extends object> = (key: string, data: T | null, event: Event) => void;
 
 export async function createEventbase(config: EventbaseConfig) {
   const db = await createDb(config.streamName);
@@ -78,10 +78,10 @@ async function replayEvents(
       const event: Event = JSON.parse(msg.string());
       if (event.type === 'PUT') {
         await db.put(event.id, event.data);
-        notifySubscribers(event.id, event.data, subscriptions);
+        notifySubscribers(event, event.id, event.data, subscriptions);
       } else if (event.type === 'DELETE') {
         await db.del(event.id);
-        notifySubscribers(event.id, null, subscriptions);
+        notifySubscribers(event, event.id, event.data, subscriptions);
       }
       lastMessageTime = Date.now();
       msg.ack();
@@ -99,10 +99,10 @@ async function replayEvents(
   };
 }
 
-function notifySubscribers<T>(key: string, data: T | null, subscriptions: Map<string, SubscriptionCallback<any>[]>) {
+function notifySubscribers<T>(event: Event, key: string, data: T | null, subscriptions: Map<string, SubscriptionCallback<any>[]>) {
   for (const [filter, callbacks] of subscriptions.entries()) {
     if (keyMatchesFilter(key, filter)) {
-      callbacks.forEach(callback => callback(key, data));
+      callbacks.forEach(callback => callback(key, data, event));
     }
   }
 }

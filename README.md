@@ -63,7 +63,7 @@ Creates a new Eventbase instance.
 Returns an array of keys that match the given filter.
 
 ```js
-const unsubscribe = eventbase.subscribe('user:*', (key, data) => {
+const unsubscribe = eventbase.subscribe('user:*', (key, data, event) => {
   console.log(`User ${key} updated:`, data);
 });
 unsubscribe();
