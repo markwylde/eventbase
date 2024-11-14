@@ -76,7 +76,11 @@ async function replayEvents(
   (async () => {
     for await (const msg of messages) {
       const event: Event = JSON.parse(msg.string());
-      const oldData = await db.get(event.id);
+
+      let oldData = null;
+      try {
+        oldData = await db.get(event.id);
+      } catch (error) {}
       event.oldData = oldData;
 
       if (event.type === 'PUT') {
