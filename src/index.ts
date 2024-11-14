@@ -76,12 +76,15 @@ async function replayEvents(
   (async () => {
     for await (const msg of messages) {
       const event: Event = JSON.parse(msg.string());
+      const oldData = await get(event.id, db);
+      event.oldData = oldData;
+
       if (event.type === 'PUT') {
         await db.put(event.id, event.data);
         notifySubscribers(event, event.id, event.data, subscriptions);
       } else if (event.type === 'DELETE') {
         await db.del(event.id);
-        notifySubscribers(event, event.id, event.data, subscriptions);
+        notifySubscribers(event, event.id, null, subscriptions);
       }
       lastMessageTime = Date.now();
       msg.ack();

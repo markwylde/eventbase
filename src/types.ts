@@ -9,5 +9,6 @@ export type Event = {
   type: 'PUT' | 'DELETE';
   id: string;
   data?: any;
+  oldData?: any;
   timestamp: number;
 };
