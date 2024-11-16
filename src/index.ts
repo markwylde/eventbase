@@ -144,8 +144,9 @@ async function put<T extends object>(config: EventbaseConfig, id: string, data: 
     `${config.streamName}.${base64encode(id)}-put`,
     JSON.stringify(event)
   );
-  await jsm.streams.purge(config.streamName, {
-    filter: `${config.streamName}.${base64encode(id)}-put`
+  jsm.streams.purge(config.streamName, {
+    filter: `${config.streamName}.${base64encode(id)}-put`,
+    keep: 1
   });
   await db.put(id, data);
   return data;
@@ -162,7 +163,6 @@ async function del(config: EventbaseConfig, id: string, js: JetStreamClient, jsm
     JSON.stringify(event)
   );
   await db.del(id);
-  const startTime = Date.now();
   const result = await jsm.streams.purge(config.streamName, {
     filter: `${config.streamName}.${base64encode(id)}-put`
   });
