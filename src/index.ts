@@ -2,7 +2,9 @@ import type { Event, EventbaseConfig } from './types.js';
 import type { Level } from 'level';
 import { createDb } from './db.js';
 import { setupNats } from './nats.js';
-import { JetStreamClient } from '@nats-io/jetstream';
+import { JetStreamClient, JetStreamManager } from '@nats-io/jetstream';
+
+const base64encode = (str: string) => Buffer.from(str).toString('base64');
 
 type Stream = {
   waitUntilReady: () => Promise<void>;
@@ -21,9 +23,12 @@ export async function createEventbase(config: EventbaseConfig) {
   await stream.waitUntilReady();
 
   return {
-    put: async <T extends object>(id: string, data: T) => put(id, data, config.streamName, js, db),
-    get: async <T extends object>(id: string): Promise<T | null> => get<T>(id, db),
-    delete: async (id: string) => delete_(id, config.streamName, js, db),
+    get: async <T extends object>(id: string): Promise<T | null> => {
+      const result = await get(config, id, db);
+      return result as T | null;
+    },
+    put: async <T extends object>(id: string, data: T) => put.bind(null, config)(id, data, js, jsm, db),
+    delete: async (id: string) => del.bind(null, config)(id, js, jsm, db),
     keys: async (pattern: string) => keys(pattern, db),
     subscribe: <T extends object>(filter: string, callback: SubscriptionCallback<T>) => {
       if (!subscriptions.has(filter)) {
@@ -119,22 +124,7 @@ function keyMatchesFilter(key: string, filter: string): boolean {
   return regex.test(key);
 }
 
-async function put<T extends object>(id: string, data: T, streamName: string, js: any, db: Level<string, object>) {
-  const event: Event = {
-    type: 'PUT',
-    id,
-    data,
-    timestamp: Date.now()
-  };
-  await js.publish(
-    `${streamName}.put`,
-    JSON.stringify(event)
-  );
-  await db.put(id, data);
-  return data;
-}
-
-async function get<T extends object>(id: string, db: Level<string, object>): Promise<T | null> {
+async function get<T extends object>(config: EventbaseConfig, id: string, db: Level<string, object>): Promise<T | null> {
   try {
     return await db.get(id) as T;
   } catch (err: any) {
@@ -143,17 +133,40 @@ async function get<T extends object>(id: string, db: Level<string, object>): Pro
   }
 }
 
-async function delete_(id: string, streamName: string, js: any, db: Level<string, object>) {
+async function put<T extends object>(config: EventbaseConfig, id: string, data: T, js: JetStreamClient, jsm: JetStreamManager, db: Level<string, object>) {
+  const event: Event = {
+    type: 'PUT',
+    id,
+    data,
+    timestamp: Date.now()
+  };
+  await js.publish(
+    `${config.streamName}.${base64encode(id)}-put`,
+    JSON.stringify(event)
+  );
+  await jsm.streams.purge(config.streamName, {
+    filter: `${config.streamName}.${base64encode(id)}-put`
+  });
+  await db.put(id, data);
+  return data;
+}
+
+async function del(config: EventbaseConfig, id: string, js: JetStreamClient, jsm: JetStreamManager, db: Level<string, object>) {
   const event: Event = {
     type: 'DELETE',
     id,
     timestamp: Date.now()
   };
   await js.publish(
-    `${streamName}.delete`,
+    `${config.streamName}.${base64encode(id)}-delete`,
     JSON.stringify(event)
   );
   await db.del(id);
+  const startTime = Date.now();
+  const result = await jsm.streams.purge(config.streamName, {
+    filter: `${config.streamName}.${base64encode(id)}-put`
+  });
+  return { purged: result.purged };
 }
 
 async function keys(pattern: string, db: Level<string, object>) {
