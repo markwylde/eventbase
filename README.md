@@ -29,7 +29,10 @@ const eventbase = await createEventbase({
   nats: {
     servers: ['localhost:4222']
   },
-  streamName: 'myapp'
+  streamName: 'myapp',
+  onMessage: (event) => {
+    console.log('Received', event);
+  }
 });
 
 // Store data

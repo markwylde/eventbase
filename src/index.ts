@@ -42,7 +42,7 @@ export async function createEventbase(config: EventbaseConfig) {
   const { nc, js, jsm } = await setupNats(config.streamName, config.nats);
   const subscriptions = new Map<string, SubscriptionCallback<any>[]>();
 
-  const stream = await replayEvents(config.streamName, js, db, metaDb, subscriptions);
+  const stream = await replayEvents(config, config.streamName, js, db, metaDb, subscriptions);
   await stream.waitUntilReady();
 
   return {
@@ -76,6 +76,7 @@ export async function createEventbase(config: EventbaseConfig) {
 }
 
 async function replayEvents(
+  config: EventbaseConfig,
   streamName: string,
   js: JetStreamClient,
   db: Level<string, any>,
@@ -101,10 +102,14 @@ async function replayEvents(
     }
   }, 100);
 
-
   (async () => {
     for await (const msg of messages) {
       const event: Event = JSON.parse(msg.string());
+
+      config.onMessage?.(event);
+
+      event.oldData = await db.get(event.id).catch(() => null);
+
       if (event.type === 'PUT') {
         await db.put(event.id, event.data);
         await updateMetaData(event.id, msg.time.toISOString(), metaDb);
