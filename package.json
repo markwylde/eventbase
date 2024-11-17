@@ -10,6 +10,7 @@
     "build": "tsc",
     "dev": "tsx --watch demo/index.ts",
     "test": "tsx --test test/*.test.ts",
+    "test:only": "tsx --test --test-only test/*.test.ts",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
