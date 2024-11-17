@@ -17,7 +17,12 @@ interface MetaData {
   changes: number;
 }
 
-type SubscriptionCallback<T extends object> = (key: string, data: { meta: MetaData; data: T } | null, event: Event) => void;
+type SubscriptionCallback<T extends object> = (
+  key: string,
+  data: T | null,
+  meta: MetaData | null,
+  event: Event
+) => void;
 
 const sequenceWaiters = new Map<number, (() => void)[]>();
 
@@ -31,20 +36,21 @@ function waitForStream(seq: number): Promise<void> {
 }
 
 export async function createEventbase(config: EventbaseConfig) {
-  const db = await createDb(config.streamName);
-  const metaDb = await createDb<MetaData>(`${config.streamName}_meta`);
+  const db: Level<string, any> = await createDb(config.streamName);
+  const metaDb: Level<string, any> = await createDb(`${config.streamName}_meta`);
+
   const { nc, js, jsm } = await setupNats(config.streamName, config.nats);
   const subscriptions = new Map<string, SubscriptionCallback<any>[]>();
 
-  // Replay all events from stream to rebuild state
   const stream = await replayEvents(config.streamName, js, db, metaDb, subscriptions);
   await stream.waitUntilReady();
 
   return {
     get: async <T extends object>(id: string): Promise<{ meta: MetaData; data: T } | null> => {
-      return get(id, db, metaDb);
+      return get<T>(id, db, metaDb);
     },
-    put: async <T extends object>(id: string, data: T) => put(config, id, data, js, jsm, db, metaDb),
+    put: async <T extends object>(id: string, data: T) =>
+      put<T>(config, id, data, js, jsm, db, metaDb),
     delete: async (id: string) => del(config, id, js, jsm, db, metaDb),
     keys: async (pattern: string) => keys(pattern, db),
     subscribe: <T extends object>(filter: string, callback: SubscriptionCallback<T>) => {
@@ -54,7 +60,10 @@ export async function createEventbase(config: EventbaseConfig) {
       subscriptions.get(filter)!.push(callback as SubscriptionCallback<any>);
       return () => {
         const callbacks = subscriptions.get(filter)!;
-        subscriptions.set(filter, callbacks.filter(cb => cb !== callback));
+        subscriptions.set(
+          filter,
+          callbacks.filter((cb) => cb !== callback)
+        );
       };
     },
     close: async () => {
@@ -62,29 +71,28 @@ export async function createEventbase(config: EventbaseConfig) {
       await db.close();
       await metaDb.close();
       await nc.close();
-    }
+    },
   };
 }
 
 async function replayEvents(
   streamName: string,
   js: JetStreamClient,
-  db: Level<string, object>,
+  db: Level<string, any>,
   metaDb: Level<string, MetaData>,
   subscriptions: Map<string, SubscriptionCallback<any>[]>
 ): Promise<Stream> {
   let isReady = false;
-  let resolve: () => void;
-  const readyPromise = new Promise<void>(_resolve => {
+  let resolve!: () => void;
+  const readyPromise = new Promise<void>((_resolve) => {
     resolve = _resolve;
   });
 
   const consumer = await js.consumers.get(streamName);
   const messages = await consumer.consume();
 
-  // Track last received message time
   let lastMessageTime = Date.now();
-  const READY_THRESHOLD = 1000; // 1 second without messages means we're caught up
+  const READY_THRESHOLD = 1000;
   const checkIfReady = setInterval(() => {
     if (!isReady && Date.now() - lastMessageTime > READY_THRESHOLD) {
       isReady = true;
@@ -93,13 +101,13 @@ async function replayEvents(
     }
   }, 100);
 
-  // Start processing messages
+
   (async () => {
     for await (const msg of messages) {
       const event: Event = JSON.parse(msg.string());
       if (event.type === 'PUT') {
         await db.put(event.id, event.data);
-        await updateMetaData(event.id, msg.timestamp, metaDb);
+        await updateMetaData(event.id, msg.time.toISOString(), metaDb);
         notifySubscribers(event, event.id, await get(event.id, db, metaDb), subscriptions);
       } else if (event.type === 'DELETE') {
         await db.del(event.id);
@@ -107,10 +115,9 @@ async function replayEvents(
         notifySubscribers(event, event.id, null, subscriptions);
       }
       lastMessageTime = Date.now();
-      // Trigger waiters for this sequence
       const seq = msg.seq;
       if (sequenceWaiters.has(seq)) {
-        sequenceWaiters.get(seq)!.forEach(resolve => resolve());
+        sequenceWaiters.get(seq)!.forEach((resolve) => resolve());
         sequenceWaiters.delete(seq);
       }
       msg.ack();
@@ -123,11 +130,15 @@ async function replayEvents(
       clearInterval(checkIfReady);
       await messages.close();
       await consumer.delete();
-    }
+    },
   };
 }
 
-async function updateMetaData(id: string, time: string, metaDb: Level<string, MetaData>): Promise<void> {
+async function updateMetaData(
+  id: string,
+  time: string,
+  metaDb: Level<string, MetaData>
+): Promise<void> {
   let meta: MetaData;
   try {
     meta = await metaDb.get(id);
@@ -143,10 +154,15 @@ async function updateMetaData(id: string, time: string, metaDb: Level<string, Me
   await metaDb.put(id, meta);
 }
 
-function notifySubscribers<T extends object>(event: Event, key: string, data: { meta: MetaData; data: T } | null, subscriptions: Map<string, SubscriptionCallback<any>[]>) {
+function notifySubscribers<T>(
+  event: Event,
+  key: string,
+  data: { meta: MetaData; data: T } | null,
+  subscriptions: Map<string, SubscriptionCallback<any>[]>
+) {
   for (const [filter, callbacks] of subscriptions.entries()) {
     if (keyMatchesFilter(key, filter)) {
-      callbacks.forEach(callback => callback(key, data, event));
+      callbacks.forEach((callback) => callback(key, data?.data, data?.meta || null, event));
     }
   }
 }
@@ -156,11 +172,15 @@ function keyMatchesFilter(key: string, filter: string): boolean {
   return regex.test(key);
 }
 
-async function get<T extends object>(id: string, db: Level<string, object>, metaDb: Level<string, MetaData>): Promise<{ meta: MetaData; data: T } | null> {
+async function get<T extends object>(
+  id: string,
+  db: Level<string, any>,
+  metaDb: Level<string, MetaData>
+): Promise<{ meta: MetaData; data: T } | null> {
   try {
     const [data, meta] = await Promise.all([
       db.get(id) as Promise<T>,
-      metaDb.get(id)
+      metaDb.get(id),
     ]);
     return { meta, data };
   } catch (err: any) {
@@ -175,23 +195,23 @@ async function put<T extends object>(
   data: T,
   js: JetStreamClient,
   jsm: JetStreamManager,
-  db: Level<string, object>,
+  db: Level<string, any>,
   metaDb: Level<string, MetaData>
 ): Promise<{ meta: MetaData; data: T }> {
   const event: Event = {
     type: 'PUT',
     id,
     data,
-    timestamp: Date.now()
+    timestamp: Date.now(),
   };
   const msg = await js.publish(
     `${config.streamName}.${base64encode(id)}-put`,
-    JSON.stringify(event),
+    JSON.stringify(event)
   );
   await waitForStream(msg.seq);
   await jsm.streams.purge(config.streamName, {
     filter: `${config.streamName}.${base64encode(id)}-put`,
-    keep: 1
+    keep: 1,
   });
   const result = await get<T>(id, db, metaDb);
   if (result === null) {
@@ -205,13 +225,13 @@ async function del(
   id: string,
   js: JetStreamClient,
   jsm: JetStreamManager,
-  db: Level<string, object>,
+  db: Level<string, any>,
   metaDb: Level<string, MetaData>
 ) {
   const event: Event = {
     type: 'DELETE',
     id,
-    timestamp: Date.now()
+    timestamp: Date.now(),
   };
   const msg = await js.publish(
     `${config.streamName}.${base64encode(id)}-delete`,
@@ -219,12 +239,12 @@ async function del(
   );
   await waitForStream(msg.seq);
   const result = await jsm.streams.purge(config.streamName, {
-    filter: `${config.streamName}.${base64encode(id)}-put`
+    filter: `${config.streamName}.${base64encode(id)}-put`,
   });
   return { purged: result.purged };
 }
 
-async function keys(pattern: string, db: Level<string, object>) {
+async function keys(pattern: string, db: Level<string, any>) {
   const keys: string[] = [];
   for await (const key of db.keys()) {
     if (key.match(pattern)) {

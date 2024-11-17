@@ -1,130 +1,144 @@
 # Eventbase
-
-A distributed event-sourced database built on NATS JetStream and LevelDB.
+A distributed event-sourced database built on NATS JetStream.
 
 ## Features
-- Event sourcing architecture
-- Distributed state management
-- Real-time data synchronization
+- Event sourcing with automatic metadata tracking
+- Distributed state synchronization across instances
+- Real-time data subscriptions with pattern matching
 - Simple key-value storage API
-- Automatic event replay and state reconstruction
+- Automatic metadata tracking (creation date, modification date, change count)
+- Support for large datasets
+- Pattern-based key filtering
+- Special character support in keys
 
 ## Installation
-
 ```bash
 npm install @markwylde/eventbase
 ```
 
 ## Prerequisites
-
-- NATS Server with JetStream enabled running on your network
+- NATS Server with JetStream enabled
 - Node.js 20 or higher
 
 ## Quick Start
-
-```typescript
+```javascript
 import createEventbase from '@markwylde/eventbase';
 
 // Initialize eventbase
 const eventbase = await createEventbase({
-  streamName: 'mytodoapp',
   nats: {
-    servers: ["localhost:4222", "localhost:4223"]
-  }
+    servers: ['localhost:4222']
+  },
+  streamName: 'myapp'
 });
 
 // Store data
 await eventbase.put('user123', { name: 'John Doe' });
 
-// Retrieve data
-const user = await eventbase.get('user123');
-console.log(user); // { name: 'John Doe' }
+// Retrieve data with metadata
+const result = await eventbase.get('user123');
+console.log(result);
+// {
+//   data: { name: 'John Doe' },
+//   meta: {
+//     dateCreated: '2023-...',
+//     dateModified: '2023-...',
+//     changes: 1
+//   }
+// }
 
-// Delete data
+// Subscribe to changes
+const unsubscribe = eventbase.subscribe('user:*', (key, data, meta, event) => {
+  console.log('Update:', { key, data, meta, event });
+});
+
+// Clean up
 await eventbase.delete('user123');
-
-// Close connection
+unsubscribe();
 await eventbase.close();
 ```
 
 ## API
 
 ### `createEventbase(config)`
-
 Creates a new Eventbase instance.
 
 #### Config Options:
-- `streamName`: Name of the NATS stream to use
-- `servers`: Array of NATS server addresses
+```javascript
+{
+  nats: {
+    servers: ['localhost:4222'] // NATS server addresses
+  },
+  streamName: 'myapp' // Name of the NATS stream
+}
+```
 
 ### Methods
 
-### `subscribe(filter: string, callback: function)`
-Returns an array of keys that match the given filter.
+#### `put(key: string, data: any): Promise<void>`
+Stores data with the given key.
 
-```js
-const unsubscribe = eventbase.subscribe('user:*', (key, data, event) => {
-  console.log(`User ${key} updated:`, data);
+#### `get(key: string): Promise<null | { data: any, meta: Metadata }>`
+Retrieves data and metadata for the given key. Returns null if not found.
+```javascript
+type Metadata = {
+  dateCreated: string;
+  dateModified: string;
+  changes: number;
+}
+```
+
+#### `delete(key: string): Promise<void>`
+Deletes data with the given key.
+
+#### `keys(pattern: string): Promise<string[]>`
+Returns an array of keys matching the given pattern.
+```javascript
+const keys = await eventbase.keys('user:*');
+```
+
+#### `subscribe(pattern: string, callback: Function): Function`
+Subscribes to updates matching the pattern. Returns an unsubscribe function.
+```javascript
+const unsubscribe = eventbase.subscribe('user:*', (key, data, meta, event) => {
+  console.log('Update:', { key, data, meta, event });
 });
-unsubscribe();
+```
+Callback receives:
+- `key`: The updated key
+- `data`: The current data
+- `meta`: Metadata object
+- `event`: Event details including type and timestamp
+
+#### `close(): Promise<void>`
+Closes the connection and cleans up resources.
+
+## Features in Detail
+
+### Metadata Tracking
+Every stored item includes metadata:
+- `dateCreated`: When the item was first created
+- `dateModified`: When the item was last modified
+- `changes`: Number of updates to the item
+
+### Pattern Matching
+Supports glob-style patterns for both keys() and subscribe():
+```javascript
+'user:*'      // Matches all user keys
+'order:2023:*' // Matches all 2023 orders
 ```
 
-### `keys(filter: string)`
-Returns an array of keys that match the given filter.
-
-```js
-await eventbase.put('user456', { name: 'Jane Smith' });
-```
-
-#### `put(id: string, data: any)`
-Stores data with the given ID.
-
-```js
-await eventbase.put('user123', { name: 'John Doe' });
-```
-
-#### `get(id: string)`
-Retrieves data for the given ID. Returns null if not found.
-
-```js
-const user = await eventbase.get('user123');
-console.log(user); // { name: 'John Doe' }
-```
-
-#### `delete(id: string)`
-Deletes data with the given ID.
-
-```js
-await eventbase.delete('user123');
-```
-
-#### `close()`
-Closes all connections and cleans up resources.
-
-```js
-await eventbase.close();
-```
-
-## Storage
-
-Data is stored in both:
-- LevelDB (local state)
-- NATS JetStream (distributed event log)
-
-The local state is automatically rebuilt from the event log on startup.
+### Distributed Synchronization
+Multiple instances automatically sync data through NATS JetStream.
 
 ## Development
-
 ```bash
-# Start a local nats cluster
+# Start NATS
 docker compose up -d
 
 # Install dependencies
 npm install
 
-# Run the demo
-npm start
-
-# Run with auto-reload
-npm run dev
+# Run tests
+npm test
 ```
