@@ -12,12 +12,16 @@ describe('Eventbase', async () => {
       createEventbase({
         nats: {
           servers: ['localhost:4222'],
+          user: 'a',
+          pass: 'a'
         },
         streamName,
       }),
       createEventbase({
         nats: {
           servers: ['localhost:4222'],
+          user: 'a',
+          pass: 'a'
         },
         streamName,
       })
@@ -130,6 +134,7 @@ describe('Eventbase', async () => {
           dateModified: updates[0].meta.dateModified || 'FAILED'
         },
         event: {
+          oldData: null,
           data: { value: 1 },
           id: 'test:1',
           type: 'PUT',
@@ -145,6 +150,7 @@ describe('Eventbase', async () => {
           dateModified: updates[1].meta.dateModified || 'FAILED'
         },
         event: {
+          oldData: null,
           data: { value: 2 },
           id: 'test:2',
           type: 'PUT',
