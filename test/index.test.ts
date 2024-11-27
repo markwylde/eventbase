@@ -10,6 +10,7 @@ describe('Eventbase', async () => {
     const streamName = `test-${Date.now()}-${Math.random().toString(36).substring(7)}`;
     [eventbase1, eventbase2] = await Promise.all([
       createEventbase({
+        dbPath: './test-data/' + streamName + '-node1',
         nats: {
           servers: ['localhost:4222'],
           user: 'a',
@@ -18,6 +19,7 @@ describe('Eventbase', async () => {
         streamName,
       }),
       createEventbase({
+        dbPath: './test-data/' + streamName + '-node2',
         nats: {
           servers: ['localhost:4222'],
           user: 'a',
@@ -43,6 +45,46 @@ describe('Eventbase', async () => {
     assert.equal(typeof result.meta.dateCreated, 'string');
     assert.equal(typeof result.meta.dateModified, 'string');
     assert.equal(result.meta.changes, 1);
+  });
+
+  test('should resume from stored data', async () => {
+    const streamName = `test-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    const localEventbase1 = await createEventbase({
+      dbPath: './test-data/' + streamName,
+      nats: {
+        servers: ['localhost:4222'],
+        user: 'a',
+        pass: 'a'
+      },
+      streamName,
+    })
+
+    await localEventbase1.put('user1', { name: 'John One', age: 10 });
+    await localEventbase1.put('user2', { name: 'John Two', age: 20 });
+    await localEventbase1.put('user3', { name: 'John Three', age: 30 });
+
+    await localEventbase1.close();
+
+    const messages = [];
+    const localEventbase2 = await createEventbase({
+      dbPath: './test-data/' + streamName,
+      nats: {
+        servers: ['localhost:4222'],
+        user: 'a',
+        pass: 'a'
+      },
+      streamName,
+      onMessage: (message) => {
+        messages.push(message);
+      }
+    })
+
+    const user2 = await localEventbase2.get('user2');
+    await localEventbase2.put('user4', { name: 'John Four', age: 40 });
+    await localEventbase2.close();
+
+    assert.equal(messages.length, 1);
+    assert.deepEqual(user2.data, { name: 'John Two', age: 20 });
   });
 
   test('should return null for non-existent keys', async () => {
