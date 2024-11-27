@@ -1,13 +1,11 @@
+// manager.ts
 import { createEventbase } from './index.js';
 import type { EventbaseConfig } from './types.js';
 
 type EventbaseInstance = Awaited<ReturnType<typeof createEventbase>>;
 
 type EventbaseInstances = {
-  [streamName: string]: {
-    instance: EventbaseInstance;
-    lastAccessed: number;
-  };
+  [streamName: string]: EventbaseInstance;
 };
 
 export type EventbaseManagerConfig = {
@@ -35,16 +33,19 @@ export function createEventbaseManager(config: EventbaseManagerConfig) {
 
     cleanupInterval = setInterval(async () => {
       const now = Date.now();
-      const staleInstances = Object.entries(instances).filter(
-        ([_, { lastAccessed }]) => now - lastAccessed > keepAliveSeconds * 1000
-      );
 
-      for (const [streamName, { instance }] of staleInstances) {
-        try {
-          await instance.close();
-          delete instances[streamName];
-        } catch (error) {
-          console.error(`Error closing stale instance ${streamName}:`, error);
+      for (const [streamName, instance] of Object.entries(instances)) {
+        const lastAccessed = instance.getLastAccessed();
+        const idleTime = now - lastAccessed;
+        const noActiveSubscriptions = instance.getActiveSubscriptions() === 0;
+
+        if (idleTime > keepAliveSeconds * 1000 && noActiveSubscriptions) {
+          try {
+            await instance.close();
+            delete instances[streamName];
+          } catch (error) {
+            console.error(`Error closing stale instance ${streamName}:`, error);
+          }
         }
       }
     }, cleanupIntervalMs);
@@ -67,23 +68,17 @@ export function createEventbaseManager(config: EventbaseManagerConfig) {
           onMessage,
         });
 
-        instances[streamName] = {
-          instance,
-          lastAccessed: Date.now(),
-        };
-
+        instances[streamName] = instance;
         startCleanupInterval();
-      } else {
-        instances[streamName].lastAccessed = Date.now();
       }
 
-      return instances[streamName].instance;
+      return instances[streamName];
     },
 
     closeAll: async () => {
       stopCleanupInterval();
 
-      const closePromises = Object.entries(instances).map(async ([streamName, { instance }]) => {
+      const closePromises = Object.entries(instances).map(async ([streamName, instance]) => {
         try {
           await instance.close();
         } catch (error) {
@@ -92,9 +87,7 @@ export function createEventbaseManager(config: EventbaseManagerConfig) {
       });
 
       await Promise.all(closePromises);
-
-      // Clear all instances
-      Object.keys(instances).forEach(key => delete instances[key]);
-    }
+      Object.keys(instances).forEach((key) => delete instances[key]);
+    },
   };
 }

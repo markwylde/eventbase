@@ -1,3 +1,4 @@
+// index.ts
 import type { Event, EventbaseConfig } from './types.js';
 import type { Level } from 'level';
 import { createDb } from './db.js';
@@ -37,36 +38,66 @@ function waitForStream(seq: number): Promise<void> {
 
 export async function createEventbase(config: EventbaseConfig) {
   const db: Level<string, any> = await createDb('db', config.dbPath);
-  const metaDb: Level<string, any> = await createDb('meta', config.dbPath);
+  const metaDb: Level<string, MetaData> = await createDb('meta', config.dbPath);
   const settingsDb: Level<string, any> = await createDb('settings', config.dbPath);
 
   const { nc, js, jsm } = await setupNats(config.streamName, config.nats);
   const subscriptions = new Map<string, SubscriptionCallback<any>[]>();
 
+  let lastAccessed = Date.now();
+  let activeSubscriptions = 0;
+
+  const updateLastAccessed = () => {
+    lastAccessed = Date.now();
+  };
+
   const stream = await replayEvents(config, config.streamName, js, db, metaDb, settingsDb, subscriptions);
   await stream.waitUntilReady();
 
-  return {
+  const instance = {
     get: async <T extends object>(id: string): Promise<{ meta: MetaData; data: T } | null> => {
+      updateLastAccessed();
       return get<T>(id, db, metaDb);
     },
-    put: async <T extends object>(id: string, data: T) =>
-      put<T>(config, id, data, js, jsm, db, metaDb),
-    delete: async (id: string) => del(config, id, js, jsm, db, metaDb),
-    keys: async (pattern: string) => keys(pattern, db),
+
+    put: async <T extends object>(id: string, data: T) => {
+      updateLastAccessed();
+      return put<T>(config, id, data, js, jsm, db, metaDb);
+    },
+
+    delete: async (id: string) => {
+      updateLastAccessed();
+      return del(config, id, js, jsm, db, metaDb);
+    },
+
+    keys: async (pattern: string) => {
+      updateLastAccessed();
+      return keys(pattern, db);
+    },
+
     subscribe: <T extends object>(filter: string, callback: SubscriptionCallback<T>) => {
       if (!subscriptions.has(filter)) {
         subscriptions.set(filter, []);
       }
       subscriptions.get(filter)!.push(callback as SubscriptionCallback<any>);
+      activeSubscriptions++;
+
       return () => {
         const callbacks = subscriptions.get(filter)!;
-        subscriptions.set(
-          filter,
-          callbacks.filter((cb) => cb !== callback)
-        );
+        const index = callbacks.indexOf(callback as SubscriptionCallback<any>);
+        if (index !== -1) {
+          callbacks.splice(index, 1);
+        }
+        if (callbacks.length === 0) {
+          subscriptions.delete(filter);
+        }
+        activeSubscriptions = Math.max(0, activeSubscriptions - 1);
       };
     },
+
+    getLastAccessed: () => lastAccessed,
+    getActiveSubscriptions: () => activeSubscriptions,
+
     close: async () => {
       await stream.stop();
       await db.close();
@@ -75,6 +106,8 @@ export async function createEventbase(config: EventbaseConfig) {
       await nc.close();
     },
   };
+
+  return instance;
 }
 
 async function replayEvents(
@@ -126,7 +159,6 @@ async function replayEvents(
     try {
       for await (const msg of messages) {
         const seq = msg.seq;
-
         const event: Event = JSON.parse(msg.string());
 
         config.onMessage?.(event);
@@ -150,7 +182,6 @@ async function replayEvents(
         }
 
         await settingsDb.put(seqKey, seq.toString());
-        const seqStr = await settingsDb.get(seqKey);
         msg.ack();
       }
     } catch (err) {
