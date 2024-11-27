@@ -5,7 +5,7 @@ import type { EventbaseConfig } from './types.js';
 type EventbaseInstance = Awaited<ReturnType<typeof createEventbase>>;
 
 type EventbaseInstances = {
-  [streamName: string]: EventbaseInstance;
+  [streamName: string]: EventbaseInstance | Promise<EventbaseInstance>;
 };
 
 export type EventbaseManagerConfig = {
@@ -34,7 +34,8 @@ export function createEventbaseManager(config: EventbaseManagerConfig) {
     cleanupInterval = setInterval(async () => {
       const now = Date.now();
 
-      for (const [streamName, instance] of Object.entries(instances)) {
+      for (const [streamName, instanceOrPromise] of Object.entries(instances)) {
+        const instance = await instanceOrPromise;
         const lastAccessed = instance.getLastAccessed();
         const idleTime = now - lastAccessed;
         const noActiveSubscriptions = instance.getActiveSubscriptions() === 0;
@@ -61,25 +62,25 @@ export function createEventbaseManager(config: EventbaseManagerConfig) {
   return {
     getStream: async (streamName: string) => {
       if (!instances[streamName]) {
-        const instance = await createEventbase({
+        instances[streamName] = createEventbase({
           streamName,
           nats,
           dbPath: dbPath ? `${dbPath}/${streamName}` : undefined,
           onMessage,
         });
-
-        instances[streamName] = instance;
         startCleanupInterval();
       }
 
-      return instances[streamName];
+      const instance = await instances[streamName];
+      return instance;
     },
 
     closeAll: async () => {
       stopCleanupInterval();
 
-      const closePromises = Object.entries(instances).map(async ([streamName, instance]) => {
+      const closePromises = Object.entries(instances).map(async ([streamName, instanceOrPromise]) => {
         try {
+          const instance = await instanceOrPromise;
           await instance.close();
         } catch (error) {
           console.error(`Error closing instance ${streamName}:`, error);
