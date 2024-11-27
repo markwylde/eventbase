@@ -38,7 +38,7 @@ function waitForStream(seq: number): Promise<void> {
 
 export async function createEventbase(config: EventbaseConfig) {
   const db: Level<string, any> = await createDb('db', config.dbPath);
-  const metaDb: Level<string, MetaData> = await createDb('meta', config.dbPath);
+  const metaDb: Level<string, any> = await createDb('meta', config.dbPath);
   const settingsDb: Level<string, any> = await createDb('settings', config.dbPath);
 
   const { nc, js, jsm } = await setupNats(config.streamName, config.nats);
