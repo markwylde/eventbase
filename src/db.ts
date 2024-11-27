@@ -1,20 +1,18 @@
 import { Level } from 'level';
 import { join } from 'path';
-import { rm } from 'fs/promises';
+import { mkdir } from 'fs/promises';
 import { tmpdir } from 'os';
 
-export async function createDb(streamName: string) {
-  const dbPath = join(tmpdir(), `level-${streamName}-${Date.now()}-${Math.random().toString(36).substring(2, 15)}`);
+export async function createDb(streamName: string, dbPath?: string) {
+  const path = dbPath
+    ? join(dbPath, `level-${streamName}`)
+    : join(tmpdir(), `level-${streamName}`);
 
-  // Delete existing DB (just in case)
-  try {
-    await rm(dbPath, { recursive: true, force: true });
-  } catch (err) {
-    // Ignore if doesn't exist
-  }
+  // Ensure the directory exists
+  await mkdir(dbPath || tmpdir(), { recursive: true });
 
-  // Create fresh DB
-  const db = new Level<string, object>(dbPath, { valueEncoding: 'json' });
+  // Open existing DB or create a new one
+  const db = new Level<string, object>(path, { valueEncoding: 'json' });
   await db.open();
 
   return db;

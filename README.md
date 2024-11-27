@@ -26,6 +26,7 @@ import createEventbase from '@markwylde/eventbase';
 
 // Initialize eventbase
 const eventbase = await createEventbase({
+  dbPath: './data',
   nats: {
     servers: ['localhost:4222']
   },
@@ -59,6 +60,26 @@ const unsubscribe = eventbase.subscribe('user:*', (key, data, meta, event) => {
 await eventbase.delete('user123');
 unsubscribe();
 await eventbase.close();
+```
+
+## EventbaseManager
+
+The `createEventbaseManager` method is a wrapper around `Eventbase` that allows for multiple instances to be managed together. It provides a simple API for creating, getting, and deleting instances.
+
+```typescript
+import { createEventbaseManager } from '@markwylde/eventbase';
+
+const manager = createEventbaseManager({
+  dbPath: './data',
+  nats: {
+    servers: ['localhost:4222']
+  },
+  keepAliveSeconds: 3600 // Keep each stream alive for 1 hour
+});
+
+const eventbase = await manager.getStream('testStreamName');
+
+await eventbase.put('user123', { name: 'John Doe' });
 ```
 
 ## API

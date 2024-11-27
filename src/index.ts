@@ -8,10 +8,10 @@ const base64encode = (str: string) => Buffer.from(str).toString('base64');
 
 type Stream = {
   waitUntilReady: () => Promise<void>;
-  stop: () => void;
+  stop: () => Promise<void>;
 };
 
-interface MetaData {
+export interface MetaData {
   dateCreated: string;
   dateModified: string;
   changes: number;
@@ -36,13 +36,14 @@ function waitForStream(seq: number): Promise<void> {
 }
 
 export async function createEventbase(config: EventbaseConfig) {
-  const db: Level<string, any> = await createDb(config.streamName);
-  const metaDb: Level<string, any> = await createDb(`${config.streamName}_meta`);
+  const db: Level<string, any> = await createDb('db', config.dbPath);
+  const metaDb: Level<string, any> = await createDb('meta', config.dbPath);
+  const settingsDb: Level<string, any> = await createDb('settings', config.dbPath);
 
   const { nc, js, jsm } = await setupNats(config.streamName, config.nats);
   const subscriptions = new Map<string, SubscriptionCallback<any>[]>();
 
-  const stream = await replayEvents(config, config.streamName, js, db, metaDb, subscriptions);
+  const stream = await replayEvents(config, config.streamName, js, db, metaDb, settingsDb, subscriptions);
   await stream.waitUntilReady();
 
   return {
@@ -70,6 +71,7 @@ export async function createEventbase(config: EventbaseConfig) {
       await stream.stop();
       await db.close();
       await metaDb.close();
+      await settingsDb.close();
       await nc.close();
     },
   };
@@ -81,6 +83,7 @@ async function replayEvents(
   js: JetStreamClient,
   db: Level<string, any>,
   metaDb: Level<string, MetaData>,
+  settingsDb: Level<string, string>,
   subscriptions: Map<string, SubscriptionCallback<any>[]>
 ): Promise<Stream> {
   let isReady = false;
@@ -89,7 +92,24 @@ async function replayEvents(
     resolve = _resolve;
   });
 
-  const consumer = await js.consumers.get(streamName);
+  const seqKey = `${streamName}_last_processed_seq`;
+  let lastProcessedSeq: number;
+  try {
+    const seqStr = await settingsDb.get(seqKey);
+    lastProcessedSeq = parseInt(seqStr, 10);
+    if (isNaN(lastProcessedSeq)) {
+      lastProcessedSeq = 0;
+    }
+  } catch (err: any) {
+    if (err.notFound) {
+      lastProcessedSeq = 0;
+    } else {
+      throw err;
+    }
+  }
+
+  const startSeq = lastProcessedSeq + 1;
+  const consumer = await js.consumers.get(streamName, { opt_start_seq: startSeq });
   const messages = await consumer.consume();
 
   let lastMessageTime = Date.now();
@@ -102,30 +122,44 @@ async function replayEvents(
     }
   }, 100);
 
-  (async () => {
-    for await (const msg of messages) {
-      const event: Event = JSON.parse(msg.string());
+  const processing = (async () => {
+    try {
+      for await (const msg of messages) {
+        const seq = msg.seq;
 
-      config.onMessage?.(event);
+        const event: Event = JSON.parse(msg.string());
 
-      event.oldData = await db.get(event.id).catch(() => null);
+        config.onMessage?.(event);
 
-      if (event.type === 'PUT') {
-        await db.put(event.id, event.data);
-        await updateMetaData(event.id, msg.time.toISOString(), metaDb);
-        notifySubscribers(event, event.id, await get(event.id, db, metaDb), subscriptions);
-      } else if (event.type === 'DELETE') {
-        await db.del(event.id);
-        await metaDb.del(event.id);
-        notifySubscribers(event, event.id, null, subscriptions);
+        event.oldData = await db.get(event.id).catch(() => null);
+
+        if (event.type === 'PUT') {
+          await db.put(event.id, event.data);
+          await updateMetaData(event.id, msg.time.toISOString(), metaDb);
+          notifySubscribers(event, event.id, await get(event.id, db, metaDb), subscriptions);
+        } else if (event.type === 'DELETE') {
+          await db.del(event.id);
+          await metaDb.del(event.id);
+          notifySubscribers(event, event.id, null, subscriptions);
+        }
+
+        lastMessageTime = Date.now();
+        if (sequenceWaiters.has(seq)) {
+          sequenceWaiters.get(seq)!.forEach((resolve) => resolve());
+          sequenceWaiters.delete(seq);
+        }
+
+        await settingsDb.put(seqKey, seq.toString());
+        const seqStr = await settingsDb.get(seqKey);
+        msg.ack();
       }
-      lastMessageTime = Date.now();
-      const seq = msg.seq;
-      if (sequenceWaiters.has(seq)) {
-        sequenceWaiters.get(seq)!.forEach((resolve) => resolve());
-        sequenceWaiters.delete(seq);
+    } catch (err) {
+      if (await messages.closed()) {
+        // The iterator was closed, exit the loop
+      } else {
+        // An actual error occurred, re-throw it
+        throw err;
       }
-      msg.ack();
     }
   })();
 
@@ -134,6 +168,7 @@ async function replayEvents(
     stop: async () => {
       clearInterval(checkIfReady);
       await messages.close();
+      await processing;
       await consumer.delete();
     },
   };
@@ -259,4 +294,5 @@ async function keys(pattern: string, db: Level<string, any>) {
   return keys;
 }
 
+export { createEventbaseManager } from './manager.js';
 export default createEventbase;
