@@ -82,7 +82,7 @@ describe('Eventbase with Stats', async () => {
     assert.ok(typeof statsEvent.duration === 'number');
   });
 
-  test.only('should publish stats events for put operation', async () => {
+  test('should publish stats events for put operation', async () => {
     await eventbase1.put('key1', { value: 123 });
     await new Promise((resolve) => setTimeout(resolve, 100));
 
@@ -227,14 +227,49 @@ describe('Eventbase with Stats', async () => {
 
   test('should handle concurrent operations', async () => {
     const operations = [];
+    const expectedResults = new Map();
+
     for (let i = 0; i < 10; i++) {
-      operations.push(eventbase1.put(`key${i}`, { value: i }));
+      operations.push(
+        eventbase1.put(`key${i}`, { value: i })
+          .then(result => ({ success: true, key: `key${i}`, result }))
+          .catch(error => ({ success: false, key: `key${i}`, error }))
+      );
+      expectedResults.set(`key${i}`, { value: i });
     }
-    await Promise.all(operations);
-    // Verify all operations succeeded
-    for (let i = 0; i < 10; i++) {
-      const result = await eventbase1.get(`key${i}`);
-      assert.deepEqual(result.data, { value: i });
+
+    const putResults = await Promise.all(operations);
+
+    // Give processes more time to complete
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    // Collect all results
+    const getOperations = Array.from(expectedResults.keys()).map(key =>
+      eventbase1.get(key)
+        .then(result => ({ success: true, key, result }))
+        .catch(error => ({ success: false, key, error }))
+    );
+    const results = await Promise.all(getOperations);
+
+    // Verify all operations succeeded without considering order
+    const actualResults = new Map();
+
+    results.forEach(result => {
+      if (result.success && result.result && result.result.data) {
+        actualResults.set(result.key, result.result.data);
+      } else {
+        console.warn(`Unexpected result for key ${result.key}:`, result);
+      }
+    });
+
+    assert.equal(actualResults.size, expectedResults.size, 'Number of results should match');
+
+    for (const [key, expectedValue] of expectedResults) {
+      if (actualResults.has(key)) {
+        assert.deepEqual(actualResults.get(key), expectedValue, `Value for key ${key} should match`);
+      } else {
+        console.warn(`Key ${key} was not successfully retrieved`);
+      }
     }
   });
 
@@ -249,7 +284,7 @@ describe('Eventbase with Stats', async () => {
 
   test('should handle large data', async () => {
     const largeData = {
-      array: Array(500)
+      array: Array(1000)
         .fill('')
         .map((_, i) => ({ id: i, data: 'test'.repeat(100) })),
     };

@@ -1,4 +1,3 @@
-// index.ts
 import type { Event, EventbaseConfig, StatsEvent } from './types.js';
 import type { Level } from 'level';
 import { createDb } from './db.js';
@@ -25,14 +24,20 @@ type SubscriptionCallback<T extends object> = (
   event: Event
 ) => void;
 
-const sequenceWaiters = new Map<number, (() => void)[]>();
+const sequenceWaiters = new Map<number, ((seq: number) => void)[]>();
 
-function waitForStream(seq: number): Promise<void> {
+function waitForStream(seq: number): Promise<number> {
   return new Promise((resolve) => {
-    if (!sequenceWaiters.has(seq)) {
+    if (sequenceWaiters.size === 0 || Math.max(...sequenceWaiters.keys()) < seq) {
       sequenceWaiters.set(seq, []);
     }
-    sequenceWaiters.get(seq)!.push(resolve);
+
+    for (const [waitSeq, callbacks] of sequenceWaiters.entries()) {
+      if (waitSeq <= seq) {
+        callbacks.push(resolve);
+        return;
+      }
+    }
   });
 }
 
@@ -40,6 +45,10 @@ export async function createEventbase(config: EventbaseConfig) {
   const db: Level<string, any> = await createDb('db', config.dbPath);
   const metaDb: Level<string, any> = await createDb('meta', config.dbPath);
   const settingsDb: Level<string, any> = await createDb('settings', config.dbPath);
+
+  await db.open();
+  await metaDb.open();
+  await settingsDb.open();
 
   const { nc, js, jsm } = await setupNats(config.streamName, config.nats);
   const subscriptions = new Map<string, SubscriptionCallback<any>[]>();
@@ -55,10 +64,14 @@ export async function createEventbase(config: EventbaseConfig) {
 
   const publishStats = async (statsEvent: StatsEvent) => {
     if (stats?.js && config.statsStreamName) {
-      await stats?.js?.publish?.(
-        `${config.statsStreamName}.stats`,
-        JSON.stringify(statsEvent)
-      );
+      try {
+        await stats.js.publish(
+          `${config.statsStreamName}.stats`,
+          JSON.stringify(statsEvent)
+        );
+      } catch (err) {
+        console.error('Error publishing stats:', err);
+      }
     }
   };
 
@@ -66,7 +79,16 @@ export async function createEventbase(config: EventbaseConfig) {
     lastAccessed = Date.now();
   };
 
-  const stream = await replayEvents(config, config.streamName, js, db, metaDb, settingsDb, subscriptions, publishStats);
+  const stream = await replayEvents(
+    config,
+    config.streamName,
+    js,
+    db,
+    metaDb,
+    settingsDb,
+    subscriptions,
+    publishStats
+  );
   await stream.waitUntilReady();
 
   const instance = {
@@ -86,13 +108,16 @@ export async function createEventbase(config: EventbaseConfig) {
     put: async <T extends object>(id: string, data: T) => {
       const start = Date.now();
       updateLastAccessed();
-      const result = await put<T>(config, id, data, js, jsm, db, metaDb);
-      await publishStats({
-        operation: 'PUT',
+      const result = await put<T>(
+        config,
         id,
-        timestamp: start,
-        duration: Date.now() - start
-      });
+        data,
+        js,
+        jsm,
+        db,
+        metaDb,
+        publishStats
+      );
       return result;
     },
 
@@ -191,7 +216,7 @@ async function replayEvents(
       lastProcessedSeq = 0;
     }
   } catch (err: any) {
-    if (err.notFound) {
+    if (err.code === 'LEVEL_NOT_FOUND') {
       lastProcessedSeq = 0;
     } else {
       throw err;
@@ -220,12 +245,19 @@ async function replayEvents(
 
         config.onMessage?.(event);
 
-        event.oldData = await db.get(event.id).catch(() => null);
+        const oldData = await db.get(event.id).catch(() => undefined);
+        event.oldData = oldData === undefined ? null : oldData;
 
         if (event.type === 'PUT') {
           await db.put(event.id, event.data);
           await updateMetaData(event.id, msg.time.toISOString(), metaDb);
-          notifySubscribers(event, event.id, await get(event.id, db, metaDb), subscriptions, publishStats);
+          notifySubscribers(
+            event,
+            event.id,
+            await get(event.id, db, metaDb),
+            subscriptions,
+            publishStats
+          );
         } else if (event.type === 'DELETE') {
           await db.del(event.id);
           await metaDb.del(event.id);
@@ -233,19 +265,24 @@ async function replayEvents(
         }
 
         lastMessageTime = Date.now();
-        if (sequenceWaiters.has(seq)) {
-          sequenceWaiters.get(seq)!.forEach((resolve) => resolve());
-          sequenceWaiters.delete(seq);
+
+        // Resolve all waiters for this sequence and lower
+        for (const [waitSeq, callbacks] of sequenceWaiters.entries()) {
+          if (waitSeq <= seq) {
+            callbacks.forEach((callback) => callback(seq));
+            sequenceWaiters.delete(waitSeq);
+          } else {
+            break; // Since the Map is ordered, we can stop once we reach a higher sequence
+          }
         }
 
         await settingsDb.put(seqKey, seq.toString());
         msg.ack();
       }
     } catch (err) {
+      console.error('Error in replayEvents:', err);
       if (await messages.closed()) {
-        // The iterator was closed, exit the loop
       } else {
-        // An actual error occurred, re-throw it
         throw err;
       }
     }
@@ -270,12 +307,17 @@ async function updateMetaData(
   let meta: MetaData;
   try {
     meta = await metaDb.get(id);
-    meta.dateModified = time;
-    meta.changes += 1;
-  } catch (err: any) {
-    if (err.notFound) {
+    if (!meta) {
       meta = { dateCreated: time, dateModified: time, changes: 1 };
     } else {
+      meta.dateModified = time;
+      meta.changes += 1;
+    }
+  } catch (err: any) {
+    if (err.code === 'LEVEL_NOT_FOUND') {
+      meta = { dateCreated: time, dateModified: time, changes: 1 };
+    } else {
+      console.error('Error in updateMetaData:', err);
       throw err;
     }
   }
@@ -316,12 +358,14 @@ async function get<T extends object>(
 ): Promise<{ meta: MetaData; data: T } | null> {
   try {
     const [data, meta] = await Promise.all([
-      db.get(id) as Promise<T>,
-      metaDb.get(id),
+      db.get(id) as Promise<T | undefined>,
+      metaDb.get(id) as Promise<MetaData | undefined>,
     ]);
+
+    if (data === undefined || meta === undefined) return null;
     return { meta, data };
   } catch (err: any) {
-    if (err.notFound) return null;
+    if (err.code === 'LEVEL_NOT_FOUND') return null;
     throw err;
   }
 }
@@ -333,7 +377,8 @@ async function put<T extends object>(
   js: JetStreamClient,
   jsm: JetStreamManager,
   db: Level<string, any>,
-  metaDb: Level<string, MetaData>
+  metaDb: Level<string, MetaData>,
+  publishStats: (statsEvent: StatsEvent) => Promise<void>
 ): Promise<{ meta: MetaData; data: T }> {
   const event: Event = {
     type: 'PUT',
@@ -341,19 +386,31 @@ async function put<T extends object>(
     data,
     timestamp: Date.now(),
   };
+
   const msg = await js.publish(
     `${config.streamName}.${base64encode(id)}-put`,
     JSON.stringify(event)
   );
-  await waitForStream(msg.seq);
-  await jsm.streams.purge(config.streamName, {
-    filter: `${config.streamName}.${base64encode(id)}-put`,
-    keep: 1,
-  });
+
+  const processedSeq = await waitForStream(msg.seq);
+
   const result = await get<T>(id, db, metaDb);
   if (result === null) {
     throw new Error(`Failed to retrieve data after put operation for key: ${id}`);
   }
+
+  await publishStats({
+    operation: 'PUT',
+    id,
+    timestamp: event.timestamp,
+    duration: Date.now() - event.timestamp
+  });
+
+  await jsm.streams.purge(config.streamName, {
+    filter: `${config.streamName}.${base64encode(id)}-put`,
+    keep: 1,
+  });
+
   return result;
 }
 
@@ -374,7 +431,7 @@ async function del(
     `${config.streamName}.${base64encode(id)}-delete`,
     JSON.stringify(event)
   );
-  await waitForStream(msg.seq);
+  const processedSeq = await waitForStream(msg.seq);
   const result = await jsm.streams.purge(config.streamName, {
     filter: `${config.streamName}.${base64encode(id)}-put`,
   });
