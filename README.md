@@ -1,6 +1,6 @@
 # Eventbase
 
-A distributed, event-sourced, key-value database built on top of **NATS JetStream**. Eventbase provides a simple yet powerful API for storing, retrieving, and subscribing to data changes, with automatic state synchronization across distributed instances.
+A distributed, event-sourced, key-value database built on top of **NATS JetStream**. Eventbase provides a simple yet powerful API for storing, retrieving, and subscribing to data changes, with automatic state synchronization across distributed instances and built-in stats tracking.
 
 ## Features
 
@@ -13,6 +13,9 @@ A distributed, event-sourced, key-value database built on top of **NATS JetStrea
 - **Special Character Support**: Keys can contain special characters; they are base64-encoded when used in NATS subjects.
 - **Multi-instance Management**: Efficiently manage multiple Eventbase instances with automatic cleanup of inactive streams.
 - **Resilience**: Automatically resumes from stored data after restarts or failures.
+- **Stats Integration**: Built-in stats publishing for all major operations.
+- **Improved Error Handling**: Enhanced error handling throughout the codebase.
+- **Concurrent Operations**: Better handling of concurrent operations.
 
 ## Table of Contents
 
@@ -33,7 +36,11 @@ A distributed, event-sourced, key-value database built on top of **NATS JetStrea
 - [Examples](#examples)
   - [Advanced Subscription](#advanced-subscription)
   - [Using with Multiple Streams](#using-with-multiple-streams)
+  - [Using Stats Integration](#using-stats-integration)
 - [Development](#development)
+- [Stats Integration](#stats-integration)
+- [Error Handling](#error-handling)
+- [Concurrent Operations](#concurrent-operations)
 
 ## Installation
 
@@ -54,6 +61,7 @@ import createEventbase from '@markwylde/eventbase';
 // Initialize Eventbase
 const eventbase = await createEventbase({
   streamName: 'myapp',
+  statsStreamName: 'myapp_stats',
   nats: {
     servers: ['localhost:4222'],
   },
@@ -191,6 +199,7 @@ Creates a new Eventbase instance.
 ##### Config Options:
 
 - **`streamName`**: *(string, required)* Name of the NATS JetStream.
+- **`statsStreamName`**: *(string, optional)* Name of the NATS JetStream for publishing stats events.
 - **`nats`**: *(ConnectionOptions, required)* NATS connection options.
 - **`dbPath`**: *(string, optional)* Path for persistent storage. Defaults to a temporary directory.
 - **`onMessage`**: *(function, optional)* Callback for every event received.
@@ -200,6 +209,7 @@ Creates a new Eventbase instance.
 ```javascript
 const eventbase = await createEventbase({
   streamName: 'myapp',
+  statsStreamName: 'myapp_stats',
   nats: {
     servers: ['localhost:4222'],
   },
@@ -313,6 +323,50 @@ await usersBase.put('user123', { name: 'Alice' });
 
 // Close all streams when done
 await manager.closeAll();
+```
+
+### Using Stats Integration
+
+Here's an example of how to set up Eventbase with stats integration and stream the stats:
+
+```javascript
+import createEventbase from '@markwylde/eventbase';
+import { connect } from "@nats-io/transport-node";
+import { jetstream } from "@nats-io/jetstream";
+
+// Set up Eventbase with stats
+const eventbase = await createEventbase({
+  streamName: 'myEventStream',
+  statsStreamName: 'myStatsStream',
+  nats: {
+    servers: ['nats://localhost:4222'],
+  },
+  dbPath: './myEventbaseDb'
+});
+
+// Connect to NATS for streaming stats
+const nc = await connect({ servers: ['nats://localhost:4222'] });
+const js = jetstream(nc);
+
+// Subscribe to the stats stream
+const sub = js.subscribe('myStatsStream.stats');
+
+(async () => {
+  for await (const msg of sub) {
+    const statsEvent = JSON.parse(msg.string());
+    console.log('Received stats event:', statsEvent);
+    msg.ack();
+  }
+})().catch(err => console.error('Error in stats subscription:', err));
+
+// Perform some operations to generate stats
+await eventbase.put('user:1', { name: 'Alice', age: 30 });
+const user1 = await eventbase.get('user:1');
+await eventbase.delete('user:1');
+
+// Clean up
+await eventbase.close();
+await nc.close();
 ```
 
 ## Development
