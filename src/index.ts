@@ -1,8 +1,8 @@
 // index.ts
-import type { Event, EventbaseConfig } from './types.js';
+import type { Event, EventbaseConfig, StatsEvent } from './types.js';
 import type { Level } from 'level';
 import { createDb } from './db.js';
-import { setupNats } from './nats.js';
+import { EventbaseNats, setupNats } from './nats.js';
 import { JetStreamClient, JetStreamManager } from '@nats-io/jetstream';
 
 const base64encode = (str: string) => Buffer.from(str).toString('base64');
@@ -47,40 +47,95 @@ export async function createEventbase(config: EventbaseConfig) {
   let lastAccessed = Date.now();
   let activeSubscriptions = 0;
 
+  // Setup stats stream if configured
+  let stats: EventbaseNats;
+  if (config.statsStreamName) {
+    stats = await setupNats(config.statsStreamName, config.nats);
+  }
+
+  const publishStats = async (statsEvent: StatsEvent) => {
+    if (stats?.js && config.statsStreamName) {
+      await stats?.js?.publish?.(
+        `${config.statsStreamName}.stats`,
+        JSON.stringify(statsEvent)
+      );
+    }
+  };
+
   const updateLastAccessed = () => {
     lastAccessed = Date.now();
   };
 
-  const stream = await replayEvents(config, config.streamName, js, db, metaDb, settingsDb, subscriptions);
+  const stream = await replayEvents(config, config.streamName, js, db, metaDb, settingsDb, subscriptions, publishStats);
   await stream.waitUntilReady();
 
   const instance = {
     get: async <T extends object>(id: string): Promise<{ meta: MetaData; data: T } | null> => {
+      const start = Date.now();
       updateLastAccessed();
-      return get<T>(id, db, metaDb);
+      const result = await get<T>(id, db, metaDb);
+      await publishStats({
+        operation: 'GET',
+        id,
+        timestamp: start,
+        duration: Date.now() - start
+      });
+      return result;
     },
 
     put: async <T extends object>(id: string, data: T) => {
+      const start = Date.now();
       updateLastAccessed();
-      return put<T>(config, id, data, js, jsm, db, metaDb);
+      const result = await put<T>(config, id, data, js, jsm, db, metaDb);
+      await publishStats({
+        operation: 'PUT',
+        id,
+        timestamp: start,
+        duration: Date.now() - start
+      });
+      return result;
     },
 
     delete: async (id: string) => {
+      const start = Date.now();
       updateLastAccessed();
-      return del(config, id, js, jsm, db, metaDb);
+      const result = await del(config, id, js, jsm, db, metaDb);
+      await publishStats({
+        operation: 'DELETE',
+        id,
+        timestamp: start,
+        duration: Date.now() - start
+      });
+      return result;
     },
 
     keys: async (pattern: string) => {
+      const start = Date.now();
       updateLastAccessed();
-      return keys(pattern, db);
+      const result = await keys(pattern, db);
+      await publishStats({
+        operation: 'KEYS',
+        pattern,
+        timestamp: start,
+        duration: Date.now() - start
+      });
+      return result;
     },
 
     subscribe: <T extends object>(filter: string, callback: SubscriptionCallback<T>) => {
+      const start = Date.now();
       if (!subscriptions.has(filter)) {
         subscriptions.set(filter, []);
       }
       subscriptions.get(filter)!.push(callback as SubscriptionCallback<any>);
       activeSubscriptions++;
+
+      publishStats({
+        operation: 'SUBSCRIBE',
+        pattern: filter,
+        timestamp: start,
+        duration: Date.now() - start
+      });
 
       return () => {
         const callbacks = subscriptions.get(filter)!;
@@ -104,6 +159,7 @@ export async function createEventbase(config: EventbaseConfig) {
       await metaDb.close();
       await settingsDb.close();
       await nc.close();
+      await stats?.close();
     },
   };
 
@@ -117,7 +173,8 @@ async function replayEvents(
   db: Level<string, any>,
   metaDb: Level<string, MetaData>,
   settingsDb: Level<string, string>,
-  subscriptions: Map<string, SubscriptionCallback<any>[]>
+  subscriptions: Map<string, SubscriptionCallback<any>[]>,
+  publishStats: (statsEvent: StatsEvent) => Promise<void>
 ): Promise<Stream> {
   let isReady = false;
   let resolve!: () => void;
@@ -168,11 +225,11 @@ async function replayEvents(
         if (event.type === 'PUT') {
           await db.put(event.id, event.data);
           await updateMetaData(event.id, msg.time.toISOString(), metaDb);
-          notifySubscribers(event, event.id, await get(event.id, db, metaDb), subscriptions);
+          notifySubscribers(event, event.id, await get(event.id, db, metaDb), subscriptions, publishStats);
         } else if (event.type === 'DELETE') {
           await db.del(event.id);
           await metaDb.del(event.id);
-          notifySubscribers(event, event.id, null, subscriptions);
+          notifySubscribers(event, event.id, null, subscriptions, publishStats);
         }
 
         lastMessageTime = Date.now();
@@ -229,11 +286,20 @@ function notifySubscribers<T>(
   event: Event,
   key: string,
   data: { meta: MetaData; data: T } | null,
-  subscriptions: Map<string, SubscriptionCallback<any>[]>
+  subscriptions: Map<string, SubscriptionCallback<any>[]>,
+  publishStats: (statsEvent: StatsEvent) => Promise<void>
 ) {
   for (const [filter, callbacks] of subscriptions.entries()) {
     if (keyMatchesFilter(key, filter)) {
+      const start = Date.now();
       callbacks.forEach((callback) => callback(key, data?.data, data?.meta || null, event));
+      publishStats({
+        operation: 'SUBSCRIBE_EMIT',
+        id: key,
+        pattern: filter,
+        timestamp: start,
+        duration: Date.now() - start
+      });
     }
   }
 }

@@ -1,7 +1,14 @@
-import { ConnectionOptions, connect } from "@nats-io/transport-node";
-import { jetstream, jetstreamManager } from "@nats-io/jetstream";
+import { ConnectionOptions, NatsConnection, connect } from "@nats-io/transport-node";
+import { JetStreamClient, JetStreamManager, jetstream, jetstreamManager } from "@nats-io/jetstream";
 
-export async function setupNats(streamName: string, options: ConnectionOptions) {
+export type EventbaseNats = {
+  nc: NatsConnection,
+  js: JetStreamClient,
+  jsm: JetStreamManager,
+  close: () => Promise<void>
+}
+
+export async function setupNats(streamName: string, options: ConnectionOptions) : Promise<EventbaseNats> {
   const nc = await connect(options);
   const js = jetstream(nc);
   const jsm = await jetstreamManager(nc);
@@ -16,5 +23,9 @@ export async function setupNats(streamName: string, options: ConnectionOptions) 
     });
   }
 
-  return { nc, js, jsm };
+  const close = async () => {
+    await nc.close();
+  }
+
+  return { nc, js, jsm, close };
 }
