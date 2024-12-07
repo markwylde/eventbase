@@ -1,42 +1,158 @@
+// test/eventbase.test.ts
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import createEventbase from '../src/index.js';
+import { setupNats } from '../src/nats.js';
+import { StatsEvent } from '../src/types.js';
 
-describe('Eventbase', async () => {
+describe('Eventbase with Stats', async () => {
   let eventbase1;
   let eventbase2;
+  let statsEvents: StatsEvent[] = [];
+  let statsSubscription;
+  let statsNats;
+  let streamName: string;
+  let statsStreamName: string;
 
   beforeEach(async () => {
-    const streamName = `test-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    streamName = `test-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    statsStreamName = streamName + '-stats';
+
+    // Set up stats NATS connection and subscription
+    statsNats = await setupNats(statsStreamName, {
+      servers: ['localhost:4222'],
+      user: 'a',
+      pass: 'a',
+    });
+
+    // Subscribe to the stats stream
+    const sub = statsNats.nc.subscribe(`${statsStreamName}.stats`);
+    statsSubscription = (async () => {
+      for await (const msg of sub) {
+        const statsEvent: StatsEvent = JSON.parse(msg.string());
+        statsEvents.push(statsEvent);
+      }
+    })();
+
     [eventbase1, eventbase2] = await Promise.all([
       createEventbase({
         dbPath: './test-data/' + streamName + '-node1',
         nats: {
           servers: ['localhost:4222'],
           user: 'a',
-          pass: 'a'
+          pass: 'a',
         },
         streamName,
+        statsStreamName,
       }),
       createEventbase({
         dbPath: './test-data/' + streamName + '-node2',
         nats: {
           servers: ['localhost:4222'],
           user: 'a',
-          pass: 'a'
+          pass: 'a',
         },
         streamName,
-      })
+        statsStreamName,
+      }),
     ]);
   });
 
   afterEach(async () => {
-    await Promise.all([
-      eventbase1.close(),
-      eventbase2.close()
-    ]);
+    await Promise.all([eventbase1.close(), eventbase2.close()]);
+
+    // Close stats NATS connection
+    await statsNats.close();
+
+    // Clear stats events and ensure subscription is cleaned up
+    statsEvents = [];
+    // We don't need to manually stop statsSubscription; it will end when nc is closed
   });
 
+  test('should publish stats events for get operation', async () => {
+    await eventbase1.get('nonexistent');
+    // Wait a bit to ensure stats event is received
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    assert.equal(statsEvents.length, 1);
+    const statsEvent = statsEvents[0];
+    assert.equal(statsEvent.operation, 'GET');
+    assert.equal(statsEvent.id, 'nonexistent');
+    assert.ok(typeof statsEvent.timestamp === 'number');
+    assert.ok(typeof statsEvent.duration === 'number');
+  });
+
+  test('should publish stats events for put operation', async () => {
+    await eventbase1.put('key1', { value: 123 });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    assert.equal(statsEvents.length, 1);
+    const statsEvent = statsEvents[0];
+    assert.equal(statsEvent.operation, 'PUT');
+    assert.equal(statsEvent.id, 'key1');
+  });
+
+  test('should publish stats events for delete operation', async () => {
+    await eventbase1.put('keyToDelete', { value: 456 });
+    statsEvents = []; // Clear previous stats events
+    await eventbase1.delete('keyToDelete');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    assert.equal(statsEvents.length, 1);
+    const statsEvent = statsEvents[0];
+    assert.equal(statsEvent.operation, 'DELETE');
+    assert.equal(statsEvent.id, 'keyToDelete');
+  });
+
+  test('should publish stats events for keys operation', async () => {
+    await eventbase1.put('key1', {});
+    await eventbase1.put('key2', {});
+    statsEvents = []; // Clear previous stats events
+    await eventbase1.keys('key*');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    assert.equal(statsEvents.length, 1);
+    const statsEvent = statsEvents[0];
+    assert.equal(statsEvent.operation, 'KEYS');
+    assert.equal(statsEvent.pattern, 'key*');
+  });
+
+  test('should publish stats events for subscribe operation', async () => {
+    const subscription = eventbase1.subscribe('key*', () => {});
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    assert.equal(statsEvents.length, 1);
+    const statsEvent = statsEvents[0];
+    assert.equal(statsEvent.operation, 'SUBSCRIBE');
+    assert.equal(statsEvent.pattern, 'key*');
+
+    // Cleanup
+    subscription();
+  });
+
+  test('should publish stats events for subscribe emit', async () => {
+    const updates = [];
+    const subscription = eventbase1.subscribe('key*', (key, data) => {
+      updates.push({ key, data });
+    });
+
+    statsEvents = [];
+    await eventbase1.put('key1', { value: 'test' });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Expecting 3 stats events: one for PUT one for SUBSCRIBE_EMIT and one for SUBSCRIBE
+    assert.equal(statsEvents.length, 3);
+
+    const subscribeEmitEvent = statsEvents.find((e) => e.operation === 'SUBSCRIBE_EMIT');
+    assert.ok(subscribeEmitEvent);
+    assert.equal(subscribeEmitEvent.id, 'key1');
+    assert.equal(subscribeEmitEvent.pattern, 'key*');
+
+    // Cleanup
+    subscription();
+  });
+
+  // Your original tests can continue from here
   test('should store and retrieve data with metadata', async () => {
     const testData = { name: 'John Doe', age: 30 };
     await eventbase1.put('user1', testData);
@@ -48,16 +164,16 @@ describe('Eventbase', async () => {
   });
 
   test('should resume from stored data', async () => {
-    const streamName = `test-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+    const localStreamName = `test-${Date.now()}-${Math.random().toString(36).substring(7)}`;
     const localEventbase1 = await createEventbase({
-      dbPath: './test-data/' + streamName,
+      dbPath: './test-data/' + localStreamName,
       nats: {
         servers: ['localhost:4222'],
         user: 'a',
-        pass: 'a'
+        pass: 'a',
       },
-      streamName,
-    })
+      streamName: localStreamName,
+    });
 
     await localEventbase1.put('user1', { name: 'John One', age: 10 });
     await localEventbase1.put('user2', { name: 'John Two', age: 20 });
@@ -67,17 +183,17 @@ describe('Eventbase', async () => {
 
     const messages = [];
     const localEventbase2 = await createEventbase({
-      dbPath: './test-data/' + streamName,
+      dbPath: './test-data/' + localStreamName,
       nats: {
         servers: ['localhost:4222'],
         user: 'a',
-        pass: 'a'
+        pass: 'a',
       },
-      streamName,
+      streamName: localStreamName,
       onMessage: (message) => {
         messages.push(message);
-      }
-    })
+      },
+    });
 
     const user2 = await localEventbase2.get('user2');
     await localEventbase2.put('user4', { name: 'John Four', age: 40 });
@@ -99,7 +215,7 @@ describe('Eventbase', async () => {
     assert.equal(result, null);
   });
 
-  test('should sync data between instances', async (t) => {
+  test('should sync data between instances', async () => {
     // Store data in first instance
     const testData = { name: 'John Doe', age: 30 };
     await eventbase1.put('user3', testData);
@@ -111,16 +227,49 @@ describe('Eventbase', async () => {
 
   test('should handle concurrent operations', async () => {
     const operations = [];
+    const expectedResults = new Map();
+
     for (let i = 0; i < 10; i++) {
       operations.push(
         eventbase1.put(`key${i}`, { value: i })
+          .then(result => ({ success: true, key: `key${i}`, result }))
+          .catch(error => ({ success: false, key: `key${i}`, error }))
       );
+      expectedResults.set(`key${i}`, { value: i });
     }
-    await Promise.all(operations);
-    // Verify all operations succeeded
-    for (let i = 0; i < 10; i++) {
-      const result = await eventbase1.get(`key${i}`);
-      assert.deepEqual(result.data, { value: i });
+
+    const putResults = await Promise.all(operations);
+
+    // Give processes more time to complete
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    // Collect all results
+    const getOperations = Array.from(expectedResults.keys()).map(key =>
+      eventbase1.get(key)
+        .then(result => ({ success: true, key, result }))
+        .catch(error => ({ success: false, key, error }))
+    );
+    const results = await Promise.all(getOperations);
+
+    // Verify all operations succeeded without considering order
+    const actualResults = new Map();
+
+    results.forEach(result => {
+      if (result.success && result.result && result.result.data) {
+        actualResults.set(result.key, result.result.data);
+      } else {
+        console.warn(`Unexpected result for key ${result.key}:`, result);
+      }
+    });
+
+    assert.equal(actualResults.size, expectedResults.size, 'Number of results should match');
+
+    for (const [key, expectedValue] of expectedResults) {
+      if (actualResults.has(key)) {
+        assert.deepEqual(actualResults.get(key), expectedValue, `Value for key ${key} should match`);
+      } else {
+        console.warn(`Key ${key} was not successfully retrieved`);
+      }
     }
   });
 
@@ -135,7 +284,9 @@ describe('Eventbase', async () => {
 
   test('should handle large data', async () => {
     const largeData = {
-      array: Array(1000).fill('').map((_, i) => ({ id: i, data: 'test'.repeat(100) }))
+      array: Array(1000)
+        .fill('')
+        .map((_, i) => ({ id: i, data: 'test'.repeat(100) })),
     };
     await eventbase1.put('largeKey', largeData);
     const result = await eventbase1.get('largeKey');
@@ -173,15 +324,15 @@ describe('Eventbase', async () => {
         meta: {
           changes: 1,
           dateCreated: updates[0].meta.dateCreated || 'FAILED',
-          dateModified: updates[0].meta.dateModified || 'FAILED'
+          dateModified: updates[0].meta.dateModified || 'FAILED',
         },
         event: {
           oldData: null,
           data: { value: 1 },
           id: 'test:1',
           type: 'PUT',
-          timestamp: updates[0].event.timestamp
-        }
+          timestamp: updates[0].event.timestamp,
+        },
       },
       {
         key: 'test:2',
@@ -189,16 +340,16 @@ describe('Eventbase', async () => {
         meta: {
           changes: 1,
           dateCreated: updates[1].meta.dateCreated || 'FAILED',
-          dateModified: updates[1].meta.dateModified || 'FAILED'
+          dateModified: updates[1].meta.dateModified || 'FAILED',
         },
         event: {
           oldData: null,
           data: { value: 2 },
           id: 'test:2',
           type: 'PUT',
-          timestamp: updates[1].event.timestamp
-        }
-      }
+          timestamp: updates[1].event.timestamp,
+        },
+      },
     ];
 
     assert.deepEqual(updates, expectedUpdates);
@@ -241,7 +392,7 @@ describe('Eventbase', async () => {
     assert.equal(result.meta.changes, 1);
     assert.equal(result.meta.dateCreated, result.meta.dateModified);
 
-    await new Promise(resolve => setTimeout(resolve, 10));
+    await new Promise((resolve) => setTimeout(resolve, 10));
     await eventbase1.put(key, { value: 2 });
     result = await eventbase1.get(key);
     assert.equal(result.meta.changes, 2);

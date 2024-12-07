@@ -1,8 +1,7 @@
-// index.ts
-import type { Event, EventbaseConfig } from './types.js';
+import type { Event, EventbaseConfig, StatsEvent } from './types.js';
 import type { Level } from 'level';
 import { createDb } from './db.js';
-import { setupNats } from './nats.js';
+import { EventbaseNats, setupNats } from './nats.js';
 import { JetStreamClient, JetStreamManager } from '@nats-io/jetstream';
 
 const base64encode = (str: string) => Buffer.from(str).toString('base64');
@@ -25,14 +24,20 @@ type SubscriptionCallback<T extends object> = (
   event: Event
 ) => void;
 
-const sequenceWaiters = new Map<number, (() => void)[]>();
+const sequenceWaiters = new Map<number, ((seq: number) => void)[]>();
 
-function waitForStream(seq: number): Promise<void> {
+function waitForStream(seq: number): Promise<number> {
   return new Promise((resolve) => {
-    if (!sequenceWaiters.has(seq)) {
+    if (sequenceWaiters.size === 0 || Math.max(...sequenceWaiters.keys()) < seq) {
       sequenceWaiters.set(seq, []);
     }
-    sequenceWaiters.get(seq)!.push(resolve);
+
+    for (const [waitSeq, callbacks] of sequenceWaiters.entries()) {
+      if (waitSeq <= seq) {
+        callbacks.push(resolve);
+        return;
+      }
+    }
   });
 }
 
@@ -41,46 +46,121 @@ export async function createEventbase(config: EventbaseConfig) {
   const metaDb: Level<string, any> = await createDb('meta', config.dbPath);
   const settingsDb: Level<string, any> = await createDb('settings', config.dbPath);
 
+  await db.open();
+  await metaDb.open();
+  await settingsDb.open();
+
   const { nc, js, jsm } = await setupNats(config.streamName, config.nats);
   const subscriptions = new Map<string, SubscriptionCallback<any>[]>();
 
   let lastAccessed = Date.now();
   let activeSubscriptions = 0;
 
+  // Setup stats stream if configured
+  let stats: EventbaseNats;
+  if (config.statsStreamName) {
+    stats = await setupNats(config.statsStreamName, config.nats);
+  }
+
+  const publishStats = async (statsEvent: StatsEvent) => {
+    if (stats?.js && config.statsStreamName) {
+      try {
+        await stats.js.publish(
+          `${config.statsStreamName}.stats`,
+          JSON.stringify(statsEvent)
+        );
+      } catch (err) {
+        console.error('Error publishing stats:', err);
+      }
+    }
+  };
+
   const updateLastAccessed = () => {
     lastAccessed = Date.now();
   };
 
-  const stream = await replayEvents(config, config.streamName, js, db, metaDb, settingsDb, subscriptions);
+  const stream = await replayEvents(
+    config,
+    config.streamName,
+    js,
+    db,
+    metaDb,
+    settingsDb,
+    subscriptions,
+    publishStats
+  );
   await stream.waitUntilReady();
 
   const instance = {
     get: async <T extends object>(id: string): Promise<{ meta: MetaData; data: T } | null> => {
+      const start = Date.now();
       updateLastAccessed();
-      return get<T>(id, db, metaDb);
+      const result = await get<T>(id, db, metaDb);
+      await publishStats({
+        operation: 'GET',
+        id,
+        timestamp: start,
+        duration: Date.now() - start
+      });
+      return result;
     },
 
     put: async <T extends object>(id: string, data: T) => {
+      const start = Date.now();
       updateLastAccessed();
-      return put<T>(config, id, data, js, jsm, db, metaDb);
+      const result = await put<T>(
+        config,
+        id,
+        data,
+        js,
+        jsm,
+        db,
+        metaDb,
+        publishStats
+      );
+      return result;
     },
 
     delete: async (id: string) => {
+      const start = Date.now();
       updateLastAccessed();
-      return del(config, id, js, jsm, db, metaDb);
+      const result = await del(config, id, js, jsm, db, metaDb);
+      await publishStats({
+        operation: 'DELETE',
+        id,
+        timestamp: start,
+        duration: Date.now() - start
+      });
+      return result;
     },
 
     keys: async (pattern: string) => {
+      const start = Date.now();
       updateLastAccessed();
-      return keys(pattern, db);
+      const result = await keys(pattern, db);
+      await publishStats({
+        operation: 'KEYS',
+        pattern,
+        timestamp: start,
+        duration: Date.now() - start
+      });
+      return result;
     },
 
     subscribe: <T extends object>(filter: string, callback: SubscriptionCallback<T>) => {
+      const start = Date.now();
       if (!subscriptions.has(filter)) {
         subscriptions.set(filter, []);
       }
       subscriptions.get(filter)!.push(callback as SubscriptionCallback<any>);
       activeSubscriptions++;
+
+      publishStats({
+        operation: 'SUBSCRIBE',
+        pattern: filter,
+        timestamp: start,
+        duration: Date.now() - start
+      });
 
       return () => {
         const callbacks = subscriptions.get(filter)!;
@@ -104,6 +184,7 @@ export async function createEventbase(config: EventbaseConfig) {
       await metaDb.close();
       await settingsDb.close();
       await nc.close();
+      await stats?.close();
     },
   };
 
@@ -117,7 +198,8 @@ async function replayEvents(
   db: Level<string, any>,
   metaDb: Level<string, MetaData>,
   settingsDb: Level<string, string>,
-  subscriptions: Map<string, SubscriptionCallback<any>[]>
+  subscriptions: Map<string, SubscriptionCallback<any>[]>,
+  publishStats: (statsEvent: StatsEvent) => Promise<void>
 ): Promise<Stream> {
   let isReady = false;
   let resolve!: () => void;
@@ -134,7 +216,7 @@ async function replayEvents(
       lastProcessedSeq = 0;
     }
   } catch (err: any) {
-    if (err.notFound) {
+    if (err.code === 'LEVEL_NOT_FOUND') {
       lastProcessedSeq = 0;
     } else {
       throw err;
@@ -163,32 +245,44 @@ async function replayEvents(
 
         config.onMessage?.(event);
 
-        event.oldData = await db.get(event.id).catch(() => null);
+        const oldData = await db.get(event.id).catch(() => undefined);
+        event.oldData = oldData === undefined ? null : oldData;
 
         if (event.type === 'PUT') {
           await db.put(event.id, event.data);
           await updateMetaData(event.id, msg.time.toISOString(), metaDb);
-          notifySubscribers(event, event.id, await get(event.id, db, metaDb), subscriptions);
+          notifySubscribers(
+            event,
+            event.id,
+            await get(event.id, db, metaDb),
+            subscriptions,
+            publishStats
+          );
         } else if (event.type === 'DELETE') {
           await db.del(event.id);
           await metaDb.del(event.id);
-          notifySubscribers(event, event.id, null, subscriptions);
+          notifySubscribers(event, event.id, null, subscriptions, publishStats);
         }
 
         lastMessageTime = Date.now();
-        if (sequenceWaiters.has(seq)) {
-          sequenceWaiters.get(seq)!.forEach((resolve) => resolve());
-          sequenceWaiters.delete(seq);
+
+        // Resolve all waiters for this sequence and lower
+        for (const [waitSeq, callbacks] of sequenceWaiters.entries()) {
+          if (waitSeq <= seq) {
+            callbacks.forEach((callback) => callback(seq));
+            sequenceWaiters.delete(waitSeq);
+          } else {
+            break; // Since the Map is ordered, we can stop once we reach a higher sequence
+          }
         }
 
         await settingsDb.put(seqKey, seq.toString());
         msg.ack();
       }
     } catch (err) {
+      console.error('Error in replayEvents:', err);
       if (await messages.closed()) {
-        // The iterator was closed, exit the loop
       } else {
-        // An actual error occurred, re-throw it
         throw err;
       }
     }
@@ -213,12 +307,17 @@ async function updateMetaData(
   let meta: MetaData;
   try {
     meta = await metaDb.get(id);
-    meta.dateModified = time;
-    meta.changes += 1;
-  } catch (err: any) {
-    if (err.notFound) {
+    if (!meta) {
       meta = { dateCreated: time, dateModified: time, changes: 1 };
     } else {
+      meta.dateModified = time;
+      meta.changes += 1;
+    }
+  } catch (err: any) {
+    if (err.code === 'LEVEL_NOT_FOUND') {
+      meta = { dateCreated: time, dateModified: time, changes: 1 };
+    } else {
+      console.error('Error in updateMetaData:', err);
       throw err;
     }
   }
@@ -229,11 +328,20 @@ function notifySubscribers<T>(
   event: Event,
   key: string,
   data: { meta: MetaData; data: T } | null,
-  subscriptions: Map<string, SubscriptionCallback<any>[]>
+  subscriptions: Map<string, SubscriptionCallback<any>[]>,
+  publishStats: (statsEvent: StatsEvent) => Promise<void>
 ) {
   for (const [filter, callbacks] of subscriptions.entries()) {
     if (keyMatchesFilter(key, filter)) {
+      const start = Date.now();
       callbacks.forEach((callback) => callback(key, data?.data, data?.meta || null, event));
+      publishStats({
+        operation: 'SUBSCRIBE_EMIT',
+        id: key,
+        pattern: filter,
+        timestamp: start,
+        duration: Date.now() - start
+      });
     }
   }
 }
@@ -250,12 +358,14 @@ async function get<T extends object>(
 ): Promise<{ meta: MetaData; data: T } | null> {
   try {
     const [data, meta] = await Promise.all([
-      db.get(id) as Promise<T>,
-      metaDb.get(id),
+      db.get(id) as Promise<T | undefined>,
+      metaDb.get(id) as Promise<MetaData | undefined>,
     ]);
+
+    if (data === undefined || meta === undefined) return null;
     return { meta, data };
   } catch (err: any) {
-    if (err.notFound) return null;
+    if (err.code === 'LEVEL_NOT_FOUND') return null;
     throw err;
   }
 }
@@ -267,7 +377,8 @@ async function put<T extends object>(
   js: JetStreamClient,
   jsm: JetStreamManager,
   db: Level<string, any>,
-  metaDb: Level<string, MetaData>
+  metaDb: Level<string, MetaData>,
+  publishStats: (statsEvent: StatsEvent) => Promise<void>
 ): Promise<{ meta: MetaData; data: T }> {
   const event: Event = {
     type: 'PUT',
@@ -275,19 +386,31 @@ async function put<T extends object>(
     data,
     timestamp: Date.now(),
   };
+
   const msg = await js.publish(
     `${config.streamName}.${base64encode(id)}-put`,
     JSON.stringify(event)
   );
-  await waitForStream(msg.seq);
-  await jsm.streams.purge(config.streamName, {
-    filter: `${config.streamName}.${base64encode(id)}-put`,
-    keep: 1,
-  });
+
+  const processedSeq = await waitForStream(msg.seq);
+
   const result = await get<T>(id, db, metaDb);
   if (result === null) {
     throw new Error(`Failed to retrieve data after put operation for key: ${id}`);
   }
+
+  await publishStats({
+    operation: 'PUT',
+    id,
+    timestamp: event.timestamp,
+    duration: Date.now() - event.timestamp
+  });
+
+  await jsm.streams.purge(config.streamName, {
+    filter: `${config.streamName}.${base64encode(id)}-put`,
+    keep: 1,
+  });
+
   return result;
 }
 
@@ -308,7 +431,7 @@ async function del(
     `${config.streamName}.${base64encode(id)}-delete`,
     JSON.stringify(event)
   );
-  await waitForStream(msg.seq);
+  const processedSeq = await waitForStream(msg.seq);
   const result = await jsm.streams.purge(config.streamName, {
     filter: `${config.streamName}.${base64encode(id)}-put`,
   });
