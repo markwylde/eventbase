@@ -16,6 +16,7 @@ A distributed, event-sourced, key-value database built on top of **NATS JetStrea
 - **Stats Integration**: Built-in stats publishing for all major operations.
 - **Improved Error Handling**: Enhanced error handling throughout the codebase.
 - **Concurrent Operations**: Better handling of concurrent operations.
+- **Customizable Stats Stream Names**: Ability to customize stats stream names for each Eventbase Manager instance.
 
 ## Table of Contents
 
@@ -177,6 +178,7 @@ const manager = createEventbaseManager({
     servers: ['localhost:4222'],
   },
   keepAliveSeconds: 3600, // Keep streams alive for 1 hour of inactivity
+  getStatsStreamName: (streamName) => `${streamName}_stats`, // Custom stats stream name generator
 });
 
 const eventbase = await manager.getStream('streamName');
@@ -262,6 +264,7 @@ Creates a new EventbaseManager instance to manage multiple Eventbase instances.
 - **`keepAliveSeconds`**: *(number, optional)* Time in seconds to keep inactive streams alive. Default is `3600` (1 hour).
 - **`onMessage`**: *(function, optional)* Global event handler for all streams.
 - **`cleanupIntervalMs`**: *(number, optional)* Interval in milliseconds for cleaning up inactive streams. Default is `60000` (60 seconds).
+- **`getStatsStreamName`**: *(function, optional)* A function that takes a stream name and returns the corresponding stats stream name. If not provided, stats stream names will not be set.
 
 ##### Example:
 
@@ -272,6 +275,7 @@ const manager = createEventbaseManager({
     servers: ['localhost:4222'],
   },
   keepAliveSeconds: 3600, // 1 hour
+  getStatsStreamName: (streamName) => `${streamName}_stats`,
 });
 ```
 
