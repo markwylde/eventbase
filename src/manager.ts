@@ -10,6 +10,7 @@ type EventbaseInstances = {
 
 export type EventbaseManagerConfig = {
   dbPath?: string;
+  getStatsStreamName?: (streamName: string) => string;
   nats: EventbaseConfig['nats'];
   keepAliveSeconds?: number;
   onMessage?: EventbaseConfig['onMessage'];
@@ -64,6 +65,9 @@ export function createEventbaseManager(config: EventbaseManagerConfig) {
       if (!instances[streamName]) {
         instances[streamName] = createEventbase({
           streamName,
+          statsStreamName: config.getStatsStreamName
+            ? config.getStatsStreamName(streamName)
+            : undefined,
           nats,
           dbPath: dbPath ? `${dbPath}/${streamName}` : undefined,
           onMessage,
