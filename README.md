@@ -31,10 +31,12 @@ A distributed, event-sourced, key-value database built on top of **NATS JetStrea
   - [Subscribing to Changes](#subscribing-to-changes)
   - [Closing the Connection](#closing-the-connection)
 - [Eventbase Manager](#eventbase-manager)
+  - [Event Emission](#event-emission)
 - [API](#api)
   - [Eventbase](#eventbase)
   - [EventbaseManager](#eventbasemanager)
 - [Examples](#examples)
+  - [Listening to Stream Events](#listening-to-stream-events)
   - [Advanced Subscription](#advanced-subscription)
   - [Using with Multiple Streams](#using-with-multiple-streams)
   - [Using Stats Integration](#using-stats-integration)
@@ -167,7 +169,7 @@ await eventbase.close();
 
 ## Eventbase Manager
 
-The `createEventbaseManager` function provides an efficient way to manage multiple Eventbase instances. It handles the creation, retrieval, and automatic cleanup of instances based on inactivity.
+The `createEventbaseManager` function provides an efficient way to manage multiple Eventbase instances. It handles the creation, retrieval, and automatic cleanup of instances based on inactivity. Additionally, it emits events when streams are opened and closed.
 
 ```javascript
 import { createEventbaseManager } from '@markwylde/eventbase';
@@ -181,6 +183,15 @@ const manager = createEventbaseManager({
   getStatsStreamName: (streamName) => `${streamName}_stats`, // Custom stats stream name generator
 });
 
+// Listen to stream events
+manager.on('stream:opened', (streamName) => {
+  console.log(`Stream opened: ${streamName}`);
+});
+
+manager.on('stream:closed', (streamName) => {
+  console.log(`Stream closed: ${streamName}`);
+});
+
 const eventbase = await manager.getStream('streamName');
 
 // Use the eventbase instance
@@ -188,6 +199,23 @@ await eventbase.put('key', { data: 'value' });
 
 // Close all instances when done
 await manager.closeAll();
+```
+
+### Event Emission
+
+- **`stream:opened`**: Emitted when a new stream is opened.
+- **`stream:closed`**: Emitted when a stream is closed due to inactivity or when `closeAll` is called.
+
+**Example:**
+
+```javascript
+manager.on('stream:opened', (streamName) => {
+  console.log(`Stream opened: ${streamName}`);
+});
+
+manager.on('stream:closed', (streamName) => {
+  console.log(`Stream closed: ${streamName}`);
+});
 ```
 
 ## API
@@ -255,7 +283,7 @@ Closes the Eventbase instance and cleans up resources.
 
 #### `createEventbaseManager(config)`
 
-Creates a new EventbaseManager instance to manage multiple Eventbase instances.
+Creates a new `EventbaseManager` instance to manage multiple Eventbase instances.
 
 ##### Config Options:
 
@@ -285,11 +313,82 @@ const manager = createEventbaseManager({
 
 Gets or creates an Eventbase instance for the given stream name.
 
+- **Emits**: `stream:opened` if a new stream is created.
+
 ##### `closeAll(): Promise<void>`
 
 Closes all managed Eventbase instances and stops the cleanup interval.
 
+- **Emits**: `stream:closed` for each stream that is closed.
+
+#### Event Emission
+
+The `EventbaseManager` is an `EventEmitter` that emits the following events:
+
+- **`stream:opened`**: Emitted when a new stream is opened.
+
+  **Listener Signature**:
+
+  ```typescript
+  (streamName: string) => void
+  ```
+
+- **`stream:closed`**: Emitted when a stream is closed due to inactivity or when `closeAll` is called.
+
+  **Listener Signature**:
+
+  ```typescript
+  (streamName: string) => void
+  ```
+
+**Example:**
+
+```javascript
+manager.on('stream:opened', (streamName) => {
+  console.log(`Stream opened: ${streamName}`);
+});
+
+manager.on('stream:closed', (streamName) => {
+  console.log(`Stream closed: ${streamName}`);
+});
+```
+
 ## Examples
+
+### Listening to Stream Events
+
+Using the `EventbaseManager` to listen to stream events:
+
+```javascript
+import { createEventbaseManager } from '@markwylde/eventbase';
+
+const manager = createEventbaseManager({
+  nats: {
+    servers: ['localhost:4222'],
+  },
+});
+
+// Listen for when streams are opened
+manager.on('stream:opened', (streamName) => {
+  console.log(`Stream opened: ${streamName}`);
+});
+
+// Listen for when streams are closed
+manager.on('stream:closed', (streamName) => {
+  console.log(`Stream closed: ${streamName}`);
+});
+
+// Get streams as needed
+const ordersBase = await manager.getStream('orders');
+const usersBase = await manager.getStream('users');
+
+// Use the streams
+await ordersBase.put('order123', { item: 'Laptop', quantity: 1 });
+await usersBase.put('user123', { name: 'Alice' });
+
+// Close all streams when done
+await manager.closeAll();
+```
 
 ### Advanced Subscription
 
@@ -307,13 +406,21 @@ unsubscribe();
 
 ### Using with Multiple Streams
 
-Using the EventbaseManager to handle multiple streams:
+Using the `EventbaseManager` to handle multiple streams:
 
 ```javascript
 const manager = createEventbaseManager({
   nats: {
     servers: ['localhost:4222'],
   },
+});
+
+manager.on('stream:opened', (streamName) => {
+  console.log(`Stream opened: ${streamName}`);
+});
+
+manager.on('stream:closed', (streamName) => {
+  console.log(`Stream closed: ${streamName}`);
 });
 
 const ordersBase = await manager.getStream('orders');
@@ -335,8 +442,8 @@ Here's an example of how to set up Eventbase with stats integration and stream t
 
 ```javascript
 import createEventbase from '@markwylde/eventbase';
-import { connect } from "@nats-io/transport-node";
-import { jetstream } from "@nats-io/jetstream";
+import { connect } from '@nats-io/transport-node';
+import { jetstream } from '@nats-io/jetstream';
 
 // Set up Eventbase with stats
 const eventbase = await createEventbase({
