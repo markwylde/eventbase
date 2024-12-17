@@ -1,4 +1,5 @@
 // manager.ts
+import { EventEmitter } from 'events';
 import { createEventbase } from './index.js';
 import type { EventbaseConfig } from './types.js';
 
@@ -17,82 +18,109 @@ export type EventbaseManagerConfig = {
   cleanupIntervalMs?: number;
 };
 
-export function createEventbaseManager(config: EventbaseManagerConfig) {
-  const instances: EventbaseInstances = {};
-  const {
-    dbPath,
-    nats,
-    keepAliveSeconds = 3600, // Default to 1 hour
-    onMessage,
-    cleanupIntervalMs = 60000, // Default to 60 seconds
-  } = config;
+export class EventbaseManager extends EventEmitter {
+  private instances: EventbaseInstances = {};
+  private dbPath?: string;
+  private nats: EventbaseConfig['nats'];
+  private keepAliveSeconds: number;
+  private onMessage?: EventbaseConfig['onMessage'];
+  private cleanupIntervalMs: number;
+  private cleanupInterval: NodeJS.Timeout | null = null;
+  private getStatsStreamName?: (streamName: string) => string;
 
-  let cleanupInterval: NodeJS.Timeout | null = null;
+  constructor(private config: EventbaseManagerConfig) {
+    super();
+    const {
+      dbPath,
+      nats,
+      keepAliveSeconds = 3600, // Default to 1 hour
+      onMessage,
+      cleanupIntervalMs = 60000, // Default to 60 seconds
+      getStatsStreamName,
+    } = config;
+    this.dbPath = dbPath;
+    this.nats = nats;
+    this.keepAliveSeconds = keepAliveSeconds;
+    this.onMessage = onMessage;
+    this.cleanupIntervalMs = cleanupIntervalMs;
+    this.getStatsStreamName = getStatsStreamName;
+  }
 
-  const startCleanupInterval = () => {
-    if (cleanupInterval) return;
+  private startCleanupInterval() {
+    if (this.cleanupInterval) return;
 
-    cleanupInterval = setInterval(async () => {
+    this.cleanupInterval = setInterval(async () => {
       const now = Date.now();
 
-      for (const [streamName, instanceOrPromise] of Object.entries(instances)) {
+      for (const [streamName, instanceOrPromise] of Object.entries(this.instances)) {
         const instance = await instanceOrPromise;
         const lastAccessed = instance.getLastAccessed();
         const idleTime = now - lastAccessed;
         const noActiveSubscriptions = instance.getActiveSubscriptions() === 0;
 
-        if (idleTime > keepAliveSeconds * 1000 && noActiveSubscriptions) {
+        if (idleTime > this.keepAliveSeconds * 1000 && noActiveSubscriptions) {
           try {
             await instance.close();
-            delete instances[streamName];
+            delete this.instances[streamName];
+
+            // Emit 'stream:closed' event
+            this.emit('stream:closed', streamName);
           } catch (error) {
             console.error(`Error closing stale instance ${streamName}:`, error);
           }
         }
       }
-    }, cleanupIntervalMs);
-  };
+    }, this.cleanupIntervalMs);
+  }
 
-  const stopCleanupInterval = () => {
-    if (cleanupInterval) {
-      clearInterval(cleanupInterval);
-      cleanupInterval = null;
+  private stopCleanupInterval() {
+    if (this.cleanupInterval) {
+      clearInterval(this.cleanupInterval);
+      this.cleanupInterval = null;
     }
-  };
+  }
 
-  return {
-    getStream: async (streamName: string) => {
-      if (!instances[streamName]) {
-        instances[streamName] = createEventbase({
-          streamName,
-          statsStreamName: config.getStatsStreamName
-            ? config.getStatsStreamName(streamName)
-            : undefined,
-          nats,
-          dbPath: dbPath ? `${dbPath}/${streamName}` : undefined,
-          onMessage,
-        });
-        startCleanupInterval();
-      }
-
-      const instance = await instances[streamName];
-      return instance;
-    },
-
-    closeAll: async () => {
-      stopCleanupInterval();
-
-      const closePromises = Object.entries(instances).map(async ([streamName, instanceOrPromise]) => {
-        try {
-          const instance = await instanceOrPromise;
-          await instance.close();
-        } catch (error) {
-          console.error(`Error closing instance ${streamName}:`, error);
-        }
+  async getStream(streamName: string) {
+    if (!this.instances[streamName]) {
+      this.instances[streamName] = createEventbase({
+        streamName,
+        statsStreamName: this.getStatsStreamName
+          ? this.getStatsStreamName(streamName)
+          : undefined,
+        nats: this.nats,
+        dbPath: this.dbPath ? `${this.dbPath}/${streamName}` : undefined,
+        onMessage: this.onMessage,
       });
+      this.startCleanupInterval();
 
-      await Promise.all(closePromises);
-      Object.keys(instances).forEach((key) => delete instances[key]);
-    },
-  };
+      // Emit 'stream:opened' event
+      this.emit('stream:opened', streamName);
+    }
+
+    const instance = await this.instances[streamName];
+    return instance;
+  }
+
+  async closeAll() {
+    this.stopCleanupInterval();
+
+    const closePromises = Object.entries(this.instances).map(async ([streamName, instanceOrPromise]) => {
+      try {
+        const instance = await instanceOrPromise;
+        await instance.close();
+
+        // Emit 'stream:closed' event
+        this.emit('stream:closed', streamName);
+      } catch (error) {
+        console.error(`Error closing instance ${streamName}:`, error);
+      }
+    });
+
+    await Promise.all(closePromises);
+    this.instances = {};
+  }
+}
+
+export function createEventbaseManager(config: EventbaseManagerConfig) {
+  return new EventbaseManager(config);
 }
