@@ -92,7 +92,13 @@ export async function createEventbase(config: EventbaseConfig) {
   await stream.waitUntilReady();
 
   const instance = {
+    closed: false,
+
     get: async <T extends object>(id: string): Promise<{ meta: MetaData; data: T } | null> => {
+      if (instance.closed) {
+        throw new Error('instance is closed');
+      }
+
       const start = Date.now();
       updateLastAccessed();
       const result = await get<T>(id, db, metaDb);
@@ -106,6 +112,10 @@ export async function createEventbase(config: EventbaseConfig) {
     },
 
     put: async <T extends object>(id: string, data: T) => {
+      if (instance.closed) {
+        throw new Error('instance is closed');
+      }
+
       const start = Date.now();
       updateLastAccessed();
       const result = await put<T>(
@@ -122,6 +132,10 @@ export async function createEventbase(config: EventbaseConfig) {
     },
 
     delete: async (id: string) => {
+      if (instance.closed) {
+        throw new Error('instance is closed');
+      }
+
       const start = Date.now();
       updateLastAccessed();
       const result = await del(config, id, js, jsm, db, metaDb);
@@ -135,6 +149,10 @@ export async function createEventbase(config: EventbaseConfig) {
     },
 
     keys: async (pattern: string) => {
+      if (instance.closed) {
+        throw new Error('instance is closed');
+      }
+
       const start = Date.now();
       updateLastAccessed();
       const result = await keys(pattern, db);
@@ -148,6 +166,10 @@ export async function createEventbase(config: EventbaseConfig) {
     },
 
     subscribe: <T extends object>(filter: string, callback: SubscriptionCallback<T>) => {
+      if (instance.closed) {
+        throw new Error('instance is closed');
+      }
+
       const start = Date.now();
       if (!subscriptions.has(filter)) {
         subscriptions.set(filter, []);
@@ -179,12 +201,14 @@ export async function createEventbase(config: EventbaseConfig) {
     getActiveSubscriptions: () => activeSubscriptions,
 
     close: async () => {
+      instance.closed = true;
       await stream.stop();
       await db.close();
       await metaDb.close();
       await settingsDb.close();
       await nc.close();
       await stats?.close();
+      subscriptions.clear();
     },
   };
 

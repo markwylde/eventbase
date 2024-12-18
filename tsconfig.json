@@ -11,7 +11,8 @@
     "strict": true,  // Enable strict type-checking
     "skipLibCheck": true,  // Skip type checking of declaration files
     "forceConsistentCasingInFileNames": true,
-    "declaration": true
+    "declaration": true,
+    "sourceMap": true
   },
   "exclude": ["node_modules"],
   "include": ["src", "tests"]
