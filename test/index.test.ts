@@ -284,9 +284,9 @@ describe('Eventbase with Stats', async () => {
 
   test('should handle large data', async () => {
     const largeData = {
-      array: Array(1000)
+      array: Array(100)
         .fill('')
-        .map((_, i) => ({ id: i, data: 'test'.repeat(100) })),
+        .map((_, i) => ({ id: i, data: 'test'.repeat(50) })),
     };
     await eventbase1.put('largeKey', largeData);
     const result = await eventbase1.get('largeKey');

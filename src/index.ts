@@ -201,7 +201,6 @@ async function replayEvents(
   subscriptions: Map<string, SubscriptionCallback<any>[]>,
   publishStats: (statsEvent: StatsEvent) => Promise<void>
 ): Promise<Stream> {
-  let isReady = false;
   let resolve!: () => void;
   const readyPromise = new Promise<void>((_resolve) => {
     resolve = _resolve;
@@ -223,19 +222,18 @@ async function replayEvents(
     }
   }
 
+  // Get initial stream state
+  const streamInfo = await (await js.streams.get(streamName)).info();
+  const targetSeq = streamInfo.state.last_seq;
+
+  // If there are no messages or we're already caught up, resolve immediately
+  if (targetSeq === 0 || lastProcessedSeq >= targetSeq) {
+    resolve();
+  }
+
   const startSeq = lastProcessedSeq + 1;
   const consumer = await js.consumers.get(streamName, { opt_start_seq: startSeq });
   const messages = await consumer.consume();
-
-  let lastMessageTime = Date.now();
-  const READY_THRESHOLD = 1000;
-  const checkIfReady = setInterval(() => {
-    if (!isReady && Date.now() - lastMessageTime > READY_THRESHOLD) {
-      isReady = true;
-      resolve();
-      clearInterval(checkIfReady);
-    }
-  }, 100);
 
   const processing = (async () => {
     try {
@@ -264,20 +262,23 @@ async function replayEvents(
           notifySubscribers(event, event.id, null, subscriptions, publishStats);
         }
 
-        lastMessageTime = Date.now();
-
         // Resolve all waiters for this sequence and lower
         for (const [waitSeq, callbacks] of sequenceWaiters.entries()) {
           if (waitSeq <= seq) {
             callbacks.forEach((callback) => callback(seq));
             sequenceWaiters.delete(waitSeq);
           } else {
-            break; // Since the Map is ordered, we can stop once we reach a higher sequence
+            break;
           }
         }
 
         await settingsDb.put(seqKey, seq.toString());
         msg.ack();
+
+        // Resolve when we've caught up to the initial state
+        if (seq >= targetSeq) {
+          resolve();
+        }
       }
     } catch (err) {
       console.error('Error in replayEvents:', err);
@@ -291,7 +292,6 @@ async function replayEvents(
   return {
     waitUntilReady: () => readyPromise,
     stop: async () => {
-      clearInterval(checkIfReady);
       await messages.close();
       await processing;
       await consumer.delete();
