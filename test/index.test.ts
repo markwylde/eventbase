@@ -157,7 +157,10 @@ describe('Eventbase with Stats', async () => {
     const testData = { name: 'John Doe', age: 30 };
     await eventbase1.put('user1', testData);
     const result = await eventbase1.get('user1');
-    assert.deepEqual(result.data, testData);
+    assert.deepEqual(result.data, {
+      id: result.data.id,
+      ...testData
+    });
     assert.equal(typeof result.meta.dateCreated, 'string');
     assert.equal(typeof result.meta.dateModified, 'string');
     assert.equal(result.meta.changes, 1);
@@ -200,7 +203,7 @@ describe('Eventbase with Stats', async () => {
     await localEventbase2.close();
 
     assert.equal(messages.length, 1);
-    assert.deepEqual(user2.data, { name: 'John Two', age: 20 });
+    assert.deepEqual(user2.data, { id: 'user2', name: 'John Two', age: 20 });
   });
 
   test('should return null for non-existent keys', async () => {
@@ -222,7 +225,10 @@ describe('Eventbase with Stats', async () => {
 
     // Verify data in second instance
     const result = await eventbase2.get('user3');
-    assert.deepEqual(result.data, testData);
+    assert.deepEqual(result.data, {
+      id: 'user3',
+      ...testData
+    });
   });
 
   test('should handle concurrent operations', async () => {
@@ -235,7 +241,7 @@ describe('Eventbase with Stats', async () => {
           .then(result => ({ success: true, key: `key${i}`, result }))
           .catch(error => ({ success: false, key: `key${i}`, error }))
       );
-      expectedResults.set(`key${i}`, { value: i });
+      expectedResults.set(`key${i}`, { id: 'key' + i, value: i });
     }
 
     const putResults = await Promise.all(operations);
@@ -278,12 +284,13 @@ describe('Eventbase with Stats', async () => {
     await eventbase1.put(key, { version: 1 });
     await eventbase1.put(key, { version: 2 });
     const result = await eventbase1.get(key);
-    assert.deepEqual(result.data, { version: 2 });
+    assert.deepEqual(result.data, { id: 'updateTest', version: 2 });
     assert.equal(result.meta.changes, 2);
   });
 
   test('should handle large data', async () => {
     const largeData = {
+      id: 'largeKey',
       array: Array(100)
         .fill('')
         .map((_, i) => ({ id: i, data: 'test'.repeat(50) })),
@@ -298,7 +305,10 @@ describe('Eventbase with Stats', async () => {
     const testData = { test: true };
     await eventbase1.put(specialKey, testData);
     const result = await eventbase1.get(specialKey);
-    assert.deepEqual(result.data, testData);
+    assert.deepEqual(result.data, {
+      id: specialKey,
+      ...testData
+    });
   });
 
   test('should filter keys based on pattern', async () => {
@@ -314,21 +324,22 @@ describe('Eventbase with Stats', async () => {
     const unsubscribe = eventbase1.subscribe('test:*', (key, data, meta, event) => {
       updates.push({ key, data, meta, event });
     });
-    await eventbase1.put('test:1', { value: 1 });
-    await eventbase1.put('test:2', { value: 2 });
+    await eventbase1.put('test:1', { id: 'test:1', value: 1 });
+    await eventbase1.put('test:2', { id: 'test:2', value: 2 });
 
     const expectedUpdates = [
       {
         key: 'test:1',
-        data: { value: 1 },
+        data: { id: 'test:1', value: 1 },
         meta: {
+          id: 'test:1',
           changes: 1,
           dateCreated: updates[0].meta.dateCreated || 'FAILED',
           dateModified: updates[0].meta.dateModified || 'FAILED',
         },
         event: {
           oldData: null,
-          data: { value: 1 },
+          data: { id: 'test:1', value: 1 },
           id: 'test:1',
           type: 'PUT',
           timestamp: updates[0].event.timestamp,
@@ -336,15 +347,16 @@ describe('Eventbase with Stats', async () => {
       },
       {
         key: 'test:2',
-        data: { value: 2 },
+        data: { id: 'test:2', value: 2 },
         meta: {
+          id: 'test:2',
           changes: 1,
           dateCreated: updates[1].meta.dateCreated || 'FAILED',
           dateModified: updates[1].meta.dateModified || 'FAILED',
         },
         event: {
           oldData: null,
-          data: { value: 2 },
+          data: { id: 'test:2', value: 2 },
           id: 'test:2',
           type: 'PUT',
           timestamp: updates[1].event.timestamp,
@@ -368,8 +380,8 @@ describe('Eventbase with Stats', async () => {
     await eventbase1.put('multi:1', { value: 1 });
     await eventbase1.put('multi:2', { value: 2 });
 
-    assert.deepEqual(updates1, [{ key: 'multi:1', value: { value: 1 } }]);
-    assert.deepEqual(updates2, [{ key: 'multi:2', value: { value: 2 } }]);
+    assert.deepEqual(updates1, [{ key: 'multi:1', value: { id: 'multi:1', value: 1 } }]);
+    assert.deepEqual(updates2, [{ key: 'multi:2', value: { id: 'multi:2', value: 2 } }]);
     unsubscribe1();
     unsubscribe2();
   });
@@ -382,7 +394,7 @@ describe('Eventbase with Stats', async () => {
     await eventbase1.put('unsub:1', { value: 1 });
     unsubscribe();
     await eventbase1.put('unsub:2', { value: 2 });
-    assert.deepEqual(updates, [{ key: 'unsub:1', value: { value: 1 } }]);
+    assert.deepEqual(updates, [{ key: 'unsub:1', value: { id: 'unsub:1',  value: 1 } }]);
   });
 
   test('should update metadata correctly', async () => {
@@ -397,5 +409,15 @@ describe('Eventbase with Stats', async () => {
     result = await eventbase1.get(key);
     assert.equal(result.meta.changes, 2);
     assert.notEqual(result.meta.dateCreated, result.meta.dateModified);
+  });
+
+  test('should query the database', async () => {
+    const queryObject = { firstName: { $eq: 'Joe' } };
+    const expectedResult = [{ id: '1', firstName: 'Joe', lastName: 'Bloggs' }];
+    await eventbase1.put('1', { firstName: 'Joe', lastName: 'Bloggs' });
+
+    const result = await eventbase1.query(queryObject);
+
+    assert.deepEqual(result, expectedResult);
   });
 });

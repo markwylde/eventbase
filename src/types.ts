@@ -16,9 +16,8 @@ export type Event = {
   timestamp: number;
 };
 
-// Add this to types.ts
 export type StatsEvent = {
-  operation: 'GET' | 'PUT' | 'DELETE' | 'KEYS' | 'SUBSCRIBE' | 'SUBSCRIBE_EMIT';
+  operation: 'GET' | 'QUERY' |  'PUT' | 'DELETE' | 'KEYS' | 'SUBSCRIBE' | 'SUBSCRIBE_EMIT';
   id?: string;
   pattern?: string;
   timestamp: number;

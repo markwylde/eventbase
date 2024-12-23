@@ -1,6 +1,5 @@
 import type { Event, EventbaseConfig, StatsEvent } from './types.js';
-import type { Level } from 'level';
-import { createDb } from './db.js';
+import createDoubledb, { DoubleDb } from 'doubledb';
 import { EventbaseNats, setupNats } from './nats.js';
 import { JetStreamClient, JetStreamManager } from '@nats-io/jetstream';
 
@@ -42,13 +41,9 @@ function waitForStream(seq: number): Promise<number> {
 }
 
 export async function createEventbase(config: EventbaseConfig) {
-  const db: Level<string, any> = await createDb('db', config.dbPath);
-  const metaDb: Level<string, any> = await createDb('meta', config.dbPath);
-  const settingsDb: Level<string, any> = await createDb('settings', config.dbPath);
-
-  await db.open();
-  await metaDb.open();
-  await settingsDb.open();
+  const db = await createDoubledb(config.dbPath || './data');
+  const metaDb = await createDoubledb(config.dbPath ? `${config.dbPath}/meta` : './meta');
+  const settingsDb = await createDoubledb(config.dbPath ? `${config.dbPath}/settings` : './settings');
 
   const { nc, js, jsm } = await setupNats(config.streamName, config.nats);
   const subscriptions = new Map<string, SubscriptionCallback<any>[]>();
@@ -101,14 +96,14 @@ export async function createEventbase(config: EventbaseConfig) {
 
       const start = Date.now();
       updateLastAccessed();
-      const result = await get<T>(id, db, metaDb);
+      const result = await db.read(id);
       await publishStats({
         operation: 'GET',
         id,
         timestamp: start,
         duration: Date.now() - start
       });
-      return result;
+      return result ? { meta: await metaDb.read(id), data: result } : null;
     },
 
     put: async <T extends object>(id: string, data: T) => {
@@ -155,14 +150,14 @@ export async function createEventbase(config: EventbaseConfig) {
 
       const start = Date.now();
       updateLastAccessed();
-      const result = await keys(pattern, db);
+      const result = await db.filter('id', v => v.match(pattern));
       await publishStats({
         operation: 'KEYS',
         pattern,
         timestamp: start,
         duration: Date.now() - start
       });
-      return result;
+      return result.map(record => record.id);
     },
 
     subscribe: <T extends object>(filter: string, callback: SubscriptionCallback<T>) => {
@@ -197,6 +192,23 @@ export async function createEventbase(config: EventbaseConfig) {
       };
     },
 
+    query: async (queryObject: object) => {
+      if (instance.closed) {
+        throw new Error('instance is closed');
+      }
+
+      const start = Date.now();
+      updateLastAccessed();
+      const result = await db.query(queryObject);
+      await publishStats({
+        operation: 'QUERY',
+        query: queryObject,
+        timestamp: start,
+        duration: Date.now() - start
+      });
+      return result;
+    },
+
     getLastAccessed: () => lastAccessed,
     getActiveSubscriptions: () => activeSubscriptions,
 
@@ -219,9 +231,9 @@ async function replayEvents(
   config: EventbaseConfig,
   streamName: string,
   js: JetStreamClient,
-  db: Level<string, any>,
-  metaDb: Level<string, MetaData>,
-  settingsDb: Level<string, string>,
+  db: DoubleDb,
+  metaDb: DoubleDb,
+  settingsDb: DoubleDb,
   subscriptions: Map<string, SubscriptionCallback<any>[]>,
   publishStats: (statsEvent: StatsEvent) => Promise<void>
 ): Promise<Stream> {
@@ -232,18 +244,12 @@ async function replayEvents(
 
   const seqKey = `${streamName}_last_processed_seq`;
   let lastProcessedSeq: number;
-  try {
-    const seqStr = await settingsDb.get(seqKey);
-    lastProcessedSeq = parseInt(seqStr, 10);
-    if (isNaN(lastProcessedSeq)) {
-      lastProcessedSeq = 0;
-    }
-  } catch (err: any) {
-    if (err.code === 'LEVEL_NOT_FOUND') {
-      lastProcessedSeq = 0;
-    } else {
-      throw err;
-    }
+
+  const seqStr = await settingsDb.read(seqKey);
+
+  lastProcessedSeq = parseInt(seqStr?.value, 10);
+  if (isNaN(lastProcessedSeq)) {
+    lastProcessedSeq = 0;
   }
 
   // Get initial stream state
@@ -267,11 +273,11 @@ async function replayEvents(
 
         config.onMessage?.(event);
 
-        const oldData = await db.get(event.id).catch(() => undefined);
+        const oldData = await db.read(event.id).catch(() => undefined);
         event.oldData = oldData === undefined ? null : oldData;
 
         if (event.type === 'PUT') {
-          await db.put(event.id, event.data);
+          await db.upsert(event.id, { id: event.id, ...event.data });
           await updateMetaData(event.id, msg.time.toISOString(), metaDb);
           notifySubscribers(
             event,
@@ -281,8 +287,8 @@ async function replayEvents(
             publishStats
           );
         } else if (event.type === 'DELETE') {
-          await db.del(event.id);
-          await metaDb.del(event.id);
+          await db.remove(event.id);
+          await metaDb.remove(event.id);
           notifySubscribers(event, event.id, null, subscriptions, publishStats);
         }
 
@@ -296,7 +302,7 @@ async function replayEvents(
           }
         }
 
-        await settingsDb.put(seqKey, seq.toString());
+        await settingsDb.upsert(seqKey, { id: seqKey, value: seq.toString() });
         msg.ack();
 
         // Resolve when we've caught up to the initial state
@@ -326,11 +332,11 @@ async function replayEvents(
 async function updateMetaData(
   id: string,
   time: string,
-  metaDb: Level<string, MetaData>
+  metaDb: DoubleDb,
 ): Promise<void> {
   let meta: MetaData;
   try {
-    meta = await metaDb.get(id);
+    meta = await metaDb.read(id);
     if (!meta) {
       meta = { dateCreated: time, dateModified: time, changes: 1 };
     } else {
@@ -345,7 +351,8 @@ async function updateMetaData(
       throw err;
     }
   }
-  await metaDb.put(id, meta);
+
+  await metaDb.upsert(id, { id, ...meta });
 }
 
 function notifySubscribers<T>(
@@ -377,21 +384,13 @@ function keyMatchesFilter(key: string, filter: string): boolean {
 
 async function get<T extends object>(
   id: string,
-  db: Level<string, any>,
-  metaDb: Level<string, MetaData>
+  db: DoubleDb,
+  metaDb: DoubleDb
 ): Promise<{ meta: MetaData; data: T } | null> {
-  try {
-    const [data, meta] = await Promise.all([
-      db.get(id) as Promise<T | undefined>,
-      metaDb.get(id) as Promise<MetaData | undefined>,
-    ]);
-
-    if (data === undefined || meta === undefined) return null;
-    return { meta, data };
-  } catch (err: any) {
-    if (err.code === 'LEVEL_NOT_FOUND') return null;
-    throw err;
-  }
+  const data = await db.read(id);
+  const meta = await metaDb.read(id);
+  if (data === undefined || meta === undefined) return null;
+  return { meta, data };
 }
 
 async function put<T extends object>(
@@ -400,8 +399,8 @@ async function put<T extends object>(
   data: T,
   js: JetStreamClient,
   jsm: JetStreamManager,
-  db: Level<string, any>,
-  metaDb: Level<string, MetaData>,
+  db: DoubleDb,
+  metaDb: DoubleDb,
   publishStats: (statsEvent: StatsEvent) => Promise<void>
 ): Promise<{ meta: MetaData; data: T }> {
   const event: Event = {
@@ -443,8 +442,8 @@ async function del(
   id: string,
   js: JetStreamClient,
   jsm: JetStreamManager,
-  db: Level<string, any>,
-  metaDb: Level<string, MetaData>
+  db: DoubleDb,
+  metaDb: DoubleDb
 ) {
   const event: Event = {
     type: 'DELETE',
@@ -462,14 +461,9 @@ async function del(
   return { purged: result.purged };
 }
 
-async function keys(pattern: string, db: Level<string, any>) {
-  const keys: string[] = [];
-  for await (const key of db.keys()) {
-    if (key.match(pattern)) {
-      keys.push(key);
-    }
-  }
-  return keys;
+async function keys(pattern: string, db: DoubleDb) {
+  const keys = await db.filter('id', v => v.match(pattern));
+  return keys.map(record => record.id);
 }
 
 export { createEventbaseManager } from './manager.js';

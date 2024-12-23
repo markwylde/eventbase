@@ -47,7 +47,7 @@ describe('EventbaseManager', () => {
 
     await eventbase1.put('key1', { data: 'value1' });
     const result1 = await eventbase1.get('key1');
-    assert.deepEqual(result1.data, { data: 'value1' });
+    assert.deepEqual(result1.data, { id: 'key1', data: 'value1' });
 
     const result2 = await eventbase2.get('key1');
     assert.strictEqual(result2, null);
@@ -77,7 +77,7 @@ describe('EventbaseManager', () => {
       assert.notStrictEqual(eventbase, newEventbase);
 
       const result = await newEventbase.get('key');
-      assert.deepEqual(result.data, { data: 'value' });
+      assert.deepEqual(result.data, { id: 'key', data: 'value' });
     } finally {
       await shortManager.closeAll();
     }

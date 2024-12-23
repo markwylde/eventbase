@@ -28,6 +28,7 @@ A distributed, event-sourced, key-value database built on top of **NATS JetStrea
   - [Retrieving Data](#retrieving-data)
   - [Deleting Data](#deleting-data)
   - [Listing Keys](#listing-keys)
+  - [Querying Data](#querying-data)
   - [Subscribing to Changes](#subscribing-to-changes)
   - [Closing the Connection](#closing-the-connection)
 - [Eventbase Manager](#eventbase-manager)
@@ -144,6 +145,17 @@ console.log('Keys:', keys);
 ```
 
 - Retrieves a list of keys matching the provided pattern.
+
+### Querying Data
+
+```javascript
+const queryObject = { firstName: { $eq: 'Joe' } };
+const result = await eventbase.query(queryObject);
+console.log('Query Result:', result);
+```
+
+- Queries the database using a complex query object.
+- Supports various operators like `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`, `$all`, `$exists`, and `$not`.
 
 ### Subscribing to Changes
 
@@ -267,6 +279,12 @@ Deletes the data associated with the specified key.
 ##### `keys(pattern: string): Promise<string[]>`
 
 Returns a list of keys matching the provided pattern (supports regex).
+
+##### `query(queryObject: object): Promise<object[]>`
+
+Queries the database using a complex query object.
+
+- **`queryObject`**: An object containing fields and operators to filter the records.
 
 ##### `subscribe<T>(filter: string, callback: SubscriptionCallback<T>): () => void`
 
