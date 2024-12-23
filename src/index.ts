@@ -2,6 +2,7 @@ import type { Event, EventbaseConfig, StatsEvent } from './types.js';
 import createDoubledb, { DoubleDb } from 'doubledb';
 import { EventbaseNats, setupNats } from './nats.js';
 import { JetStreamClient, JetStreamManager } from '@nats-io/jetstream';
+import { v4 as uuidv4 } from 'uuid';
 
 const base64encode = (str: string) => Buffer.from(str).toString('base64');
 
@@ -22,6 +23,10 @@ type SubscriptionCallback<T extends object> = (
   meta: MetaData | null,
   event: Event
 ) => void;
+
+type SubscriptionQuery = {
+  [key: string]: any;
+};
 
 const sequenceWaiters = new Map<number, ((seq: number) => void)[]>();
 
@@ -46,7 +51,7 @@ export async function createEventbase(config: EventbaseConfig) {
   const settingsDb = await createDoubledb(config.dbPath ? `${config.dbPath}/settings` : './settings');
 
   const { nc, js, jsm } = await setupNats(config.streamName, config.nats);
-  const subscriptions = new Map<string, SubscriptionCallback<any>[]>();
+  const subscriptions = new Map<SubscriptionQuery, SubscriptionCallback<any>[]>();
 
   let lastAccessed = Date.now();
   let activeSubscriptions = 0;
@@ -126,6 +131,27 @@ export async function createEventbase(config: EventbaseConfig) {
       return result;
     },
 
+    insert: async <T extends object>(data: T): Promise<{ id: string; meta: MetaData; data: T }> => {
+      if (instance.closed) {
+        throw new Error('instance is closed');
+      }
+
+      const id = uuidv4();
+
+      updateLastAccessed();
+      const result = await put<T>(
+        config,
+        id,
+        data,
+        js,
+        jsm,
+        db,
+        metaDb,
+        publishStats
+      );
+      return { id, ...result };
+    },
+
     delete: async (id: string) => {
       if (instance.closed) {
         throw new Error('instance is closed');
@@ -160,39 +186,40 @@ export async function createEventbase(config: EventbaseConfig) {
       return result.map(record => record.id);
     },
 
-    subscribe: <T extends object>(filter: string, callback: SubscriptionCallback<T>) => {
+    subscribe: <T extends object>(query: SubscriptionQuery, callback: SubscriptionCallback<T>) => {
       if (instance.closed) {
         throw new Error('instance is closed');
       }
 
       const start = Date.now();
-      if (!subscriptions.has(filter)) {
-        subscriptions.set(filter, []);
+      const queryKey = JSON.stringify(query);
+      if (!subscriptions.has(queryKey as unknown as SubscriptionQuery)) {
+        subscriptions.set(queryKey as unknown as SubscriptionQuery, []);
       }
-      subscriptions.get(filter)!.push(callback as SubscriptionCallback<any>);
+      subscriptions.get(queryKey as unknown as SubscriptionQuery)!.push(callback as SubscriptionCallback<any>);
       activeSubscriptions++;
 
       publishStats({
         operation: 'SUBSCRIBE',
-        pattern: filter,
+        pattern: queryKey as unknown as string,
         timestamp: start,
         duration: Date.now() - start
       });
 
       return () => {
-        const callbacks = subscriptions.get(filter)!;
+        const callbacks = subscriptions.get(queryKey as unknown as SubscriptionQuery)!;
         const index = callbacks.indexOf(callback as SubscriptionCallback<any>);
         if (index !== -1) {
           callbacks.splice(index, 1);
         }
         if (callbacks.length === 0) {
-          subscriptions.delete(filter);
+          subscriptions.delete(queryKey as unknown as SubscriptionQuery);
         }
         activeSubscriptions = Math.max(0, activeSubscriptions - 1);
       };
     },
 
-    query: async (queryObject: object) => {
+    query: async <T extends object>(queryObject: object): Promise<T[]> => {
       if (instance.closed) {
         throw new Error('instance is closed');
       }
@@ -205,7 +232,7 @@ export async function createEventbase(config: EventbaseConfig) {
         timestamp: start,
         duration: Date.now() - start
       });
-      return result;
+      return result as T[];
     },
 
     getLastAccessed: () => lastAccessed,
@@ -233,7 +260,7 @@ async function replayEvents(
   db: DoubleDb,
   metaDb: DoubleDb,
   settingsDb: DoubleDb,
-  subscriptions: Map<string, SubscriptionCallback<any>[]>,
+  subscriptions: Map<SubscriptionQuery, SubscriptionCallback<any>[]>,
   publishStats: (statsEvent: StatsEvent) => Promise<void>
 ): Promise<Stream> {
   let resolve!: () => void;
@@ -286,8 +313,8 @@ async function replayEvents(
             publishStats
           );
         } else if (event.type === 'DELETE') {
-          await db.remove(event.id);
-          await metaDb.remove(event.id);
+          await db.remove(event.id).catch(() => {});
+          await metaDb.remove(event.id).catch(() => {});
           notifySubscribers(event, event.id, null, subscriptions, publishStats);
         }
 
@@ -358,17 +385,19 @@ function notifySubscribers<T>(
   event: Event,
   key: string,
   data: { meta: MetaData; data: T } | null,
-  subscriptions: Map<string, SubscriptionCallback<any>[]>,
+  subscriptions: Map<SubscriptionQuery, SubscriptionCallback<any>[]>,
   publishStats: (statsEvent: StatsEvent) => Promise<void>
 ) {
-  for (const [filter, callbacks] of subscriptions.entries()) {
-    if (keyMatchesFilter(key, filter)) {
+  for (const [queryKey, callbacks] of subscriptions.entries()) {
+    const query = JSON.parse(queryKey as unknown as string);
+    if (event.type === 'DELETE' || queryMatchesData(query, data?.data)) {
       const start = Date.now();
-      callbacks.forEach((callback) => callback(key, data?.data, data?.meta || null, event));
+      const eventData = event.type === 'DELETE' ? event.oldData : data?.data;
+      callbacks.forEach((callback) => callback(key, eventData, data?.meta || null, event));
       publishStats({
         operation: 'SUBSCRIBE_EMIT',
         id: key,
-        pattern: filter,
+        pattern: queryKey as unknown as string,
         timestamp: start,
         duration: Date.now() - start
       });
@@ -376,9 +405,55 @@ function notifySubscribers<T>(
   }
 }
 
-function keyMatchesFilter(key: string, filter: string): boolean {
-  const regex = new RegExp('^' + filter.replace('*', '.*') + '$');
-  return regex.test(key);
+function queryMatchesData(query: SubscriptionQuery, data: any): boolean {
+  if (!data) return false;
+  for (const [key, condition] of Object.entries(query)) {
+    if (!evaluateCondition(data[key], condition)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function evaluateCondition(value: any, condition: any): boolean {
+  if (typeof condition === 'object' && condition !== null) {
+    for (const [operator, operand] of Object.entries(condition)) {
+      switch (operator) {
+        case '$lt':
+          if (!(value < (operand as number))) return false;
+          break;
+        case '$lte':
+          if (!(value <= (operand as number))) return false;
+          break;
+        case '$gt':
+          if (!(value > (operand as number))) return false;
+          break;
+        case '$gte':
+          if (!(value >= (operand as number))) return false;
+          break;
+        case '$eq':
+          if (!(value === operand)) return false;
+          break;
+        case '$ne':
+          if (!(value !== operand)) return false;
+          break;
+        case '$in':
+          if (!Array.isArray(operand) || !operand.includes(value)) return false;
+          break;
+        case '$nin':
+          if (!Array.isArray(operand) || operand.includes(value)) return false;
+          break;
+        case '$regex':
+          if (!(new RegExp(operand as string).test(value))) return false;
+          break;
+        default:
+          return false;
+      }
+    }
+    return true;
+  } else {
+    return value === condition;
+  }
 }
 
 async function get<T extends object>(

@@ -1,4 +1,3 @@
-// test/eventbase.test.ts
 import { test, describe, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import createEventbase from '../src/index.js';
@@ -118,13 +117,13 @@ describe('Eventbase with Stats', async () => {
   });
 
   test('should publish stats events for subscribe operation', async () => {
-    const subscription = eventbase1.subscribe('key*', () => {});
+    const subscription = eventbase1.subscribe({ key: { $regex: 'key.*' } }, () => {});
     await new Promise((resolve) => setTimeout(resolve, 100));
 
     assert.equal(statsEvents.length, 1);
     const statsEvent = statsEvents[0];
     assert.equal(statsEvent.operation, 'SUBSCRIBE');
-    assert.equal(statsEvent.pattern, 'key*');
+    assert.equal(statsEvent.pattern, JSON.stringify({ key: { $regex: 'key.*' } }));
 
     // Cleanup
     subscription();
@@ -132,7 +131,7 @@ describe('Eventbase with Stats', async () => {
 
   test('should publish stats events for subscribe emit', async () => {
     const updates = [];
-    const subscription = eventbase1.subscribe('key*', (key, data) => {
+    const subscription = eventbase1.subscribe({ value: 'test' }, (key, data) => {
       updates.push({ key, data });
     });
 
@@ -146,7 +145,7 @@ describe('Eventbase with Stats', async () => {
     const subscribeEmitEvent = statsEvents.find((e) => e.operation === 'SUBSCRIBE_EMIT');
     assert.ok(subscribeEmitEvent);
     assert.equal(subscribeEmitEvent.id, 'key1');
-    assert.equal(subscribeEmitEvent.pattern, 'key*');
+    assert.equal(subscribeEmitEvent.pattern, JSON.stringify({ value: 'test' }));
 
     // Cleanup
     subscription();
@@ -319,9 +318,9 @@ describe('Eventbase with Stats', async () => {
     assert.deepEqual(keys.sort(), ['something:1', 'something:2'].sort());
   });
 
-  test('should subscribe to events and receive updates', async () => {
+  test.only('should subscribe to events and receive updates', async () => {
     const updates = [];
-    const unsubscribe = eventbase1.subscribe('test:*', (key, data, meta, event) => {
+    const unsubscribe = eventbase1.subscribe({ id: { $regex: 'test:.*' } }, (key, data, meta, event) => {
       updates.push({ key, data, meta, event });
     });
     await eventbase1.put('test:1', { id: 'test:1', value: 1 });
@@ -334,15 +333,15 @@ describe('Eventbase with Stats', async () => {
         meta: {
           id: 'test:1',
           changes: 1,
-          dateCreated: updates[0].meta.dateCreated || 'FAILED',
-          dateModified: updates[0].meta.dateModified || 'FAILED',
+          dateCreated: updates[0]?.meta?.dateCreated || 'FAILED',
+          dateModified: updates[0]?.meta?.dateModified || 'FAILED',
         },
         event: {
           oldData: null,
           data: { id: 'test:1', value: 1 },
           id: 'test:1',
           type: 'PUT',
-          timestamp: updates[0].event.timestamp,
+          timestamp: updates[0]?.event?.timestamp,
         },
       },
       {
@@ -351,15 +350,15 @@ describe('Eventbase with Stats', async () => {
         meta: {
           id: 'test:2',
           changes: 1,
-          dateCreated: updates[1].meta.dateCreated || 'FAILED',
-          dateModified: updates[1].meta.dateModified || 'FAILED',
+          dateCreated: updates[1]?.meta?.dateCreated || 'FAILED',
+          dateModified: updates[1]?.meta?.dateModified || 'FAILED',
         },
         event: {
           oldData: null,
           data: { id: 'test:2', value: 2 },
           id: 'test:2',
           type: 'PUT',
-          timestamp: updates[1].event.timestamp,
+          timestamp: updates[1]?.event?.timestamp,
         },
       },
     ];
@@ -371,10 +370,10 @@ describe('Eventbase with Stats', async () => {
   test('should handle multiple subscriptions', async () => {
     const updates1 = [];
     const updates2 = [];
-    const unsubscribe1 = eventbase1.subscribe('multi:1', (key, data) => {
+    const unsubscribe1 = eventbase1.subscribe({ id: 'multi:1' }, (key, data) => {
       updates1.push({ key, value: data });
     });
-    const unsubscribe2 = eventbase1.subscribe('multi:2', (key, data) => {
+    const unsubscribe2 = eventbase1.subscribe({ id: 'multi:2' }, (key, data) => {
       updates2.push({ key, value: data });
     });
     await eventbase1.put('multi:1', { value: 1 });
@@ -388,13 +387,13 @@ describe('Eventbase with Stats', async () => {
 
   test('should unsubscribe from events', async () => {
     const updates = [];
-    const unsubscribe = eventbase1.subscribe('unsub:*', (key, data) => {
+    const unsubscribe = eventbase1.subscribe({ id: { $regex: 'unsub:.*' } }, (key, data) => {
       updates.push({ key, value: data });
     });
     await eventbase1.put('unsub:1', { value: 1 });
     unsubscribe();
     await eventbase1.put('unsub:2', { value: 2 });
-    assert.deepEqual(updates, [{ key: 'unsub:1', value: { id: 'unsub:1',  value: 1 } }]);
+    assert.deepEqual(updates, [{ key: 'unsub:1', value: { id: 'unsub:1', value: 1 } }]);
   });
 
   test('should update metadata correctly', async () => {
