@@ -169,14 +169,14 @@ export async function createEventbase(config: EventbaseConfig) {
       return result;
     },
 
-    keys: async (pattern: string) => {
+    keys: async (pattern?: string) => {
       if (instance.closed) {
         throw new Error('instance is closed');
       }
 
       const start = Date.now();
       updateLastAccessed();
-      const result = await db.filter('id', (v: string) => v.match(pattern));
+      const result = await db.filter('id', (v: string) => pattern ? v.match(pattern) : true);
       await publishStats({
         operation: 'KEYS',
         pattern,
@@ -533,11 +533,6 @@ async function del(
     filter: `${config.streamName}.${base64encode(id)}-put`,
   });
   return { purged: result.purged };
-}
-
-async function keys(pattern: string, db: DoubleDb) {
-  const keys = await db.filter('id', (v: string) => v.match(pattern));
-  return keys.map(record => record.id);
 }
 
 export { createEventbaseManager } from './manager.js';

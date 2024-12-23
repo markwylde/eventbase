@@ -318,7 +318,7 @@ describe('Eventbase with Stats', async () => {
     assert.deepEqual(keys.sort(), ['something:1', 'something:2'].sort());
   });
 
-  test.only('should subscribe to events and receive updates', async () => {
+  test('should subscribe to events and receive updates', async () => {
     const updates = [];
     const unsubscribe = eventbase1.subscribe({ id: { $regex: 'test:.*' } }, (key, data, meta, event) => {
       updates.push({ key, data, meta, event });
