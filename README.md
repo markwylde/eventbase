@@ -75,7 +75,10 @@ const eventbase = await createEventbase({
   },
 });
 
-// Store data
+// Store data with auto-generated ID
+const { id, data } = await eventbase.insert({ name: 'John Doe' });
+
+// Store data with custom ID
 await eventbase.put('user123', { name: 'John Doe' });
 
 // Retrieve data with metadata
@@ -91,10 +94,13 @@ console.log(result);
 //   },
 // }
 
-// Subscribe to changes (supports pattern matching)
-const unsubscribe = eventbase.subscribe('user*', (key, data, meta, event) => {
-  console.log('Data changed:', { key, data, meta, event });
-});
+// Subscribe to changes using query object
+const unsubscribe = eventbase.subscribe(
+  { name: { $eq: 'John Doe' } },
+  (key, data, meta, event) => {
+    console.log('Data changed:', { key, data, meta, event });
+  }
+);
 
 // Clean up when done
 await eventbase.delete('user123');
@@ -107,6 +113,10 @@ await eventbase.close();
 ### Storing Data
 
 ```javascript
+// With auto-generated ID
+const { id, data } = await eventbase.insert({ name: 'John Doe', email: 'john@example.com' });
+
+// With custom ID
 await eventbase.put('user123', { name: 'John Doe', email: 'john@example.com' });
 ```
 
@@ -149,8 +159,14 @@ console.log('Keys:', keys);
 ### Querying Data
 
 ```javascript
-const queryObject = { firstName: { $eq: 'Joe' } };
-const result = await eventbase.query(queryObject);
+// Query is now generic typed
+interface User {
+  firstName: string;
+  age: number;
+}
+
+const queryObject = { firstName: { $eq: 'Joe' }, age: { $gt: 21 } };
+const result = await eventbase.query<User>(queryObject);
 console.log('Query Result:', result);
 ```
 
@@ -160,16 +176,31 @@ console.log('Query Result:', result);
 ### Subscribing to Changes
 
 ```javascript
-const unsubscribe = eventbase.subscribe('user*', (key, data, meta, event) => {
-  console.log('Change detected:', { key, data, meta, event });
-});
+// Subscribe using query objects
+const unsubscribe = eventbase.subscribe(
+  {
+    type: 'user',
+    age: { $gte: 18 }
+  },
+  (key, data, meta, event) => {
+    console.log('Change detected:', { key, data, meta, event });
+  }
+);
+
+// Available query operators:
+// $lt, $lte, $gt, $gte - Compare numbers
+// $eq, $ne - Compare any value
+// $in, $nin - Check if value is in array
+// $regex - Match string against regular expression
+
+// Examples:
+eventbase.subscribe({ age: { $lt: 18 } }, callback); // age less than 18
+eventbase.subscribe({ status: { $in: ['active', 'pending'] } }, callback); // status is active or pending
+eventbase.subscribe({ name: { $regex: '^John' } }, callback); // name starts with John
 
 // To unsubscribe
 unsubscribe();
 ```
-
-- **Filter**: A string pattern to match keys (e.g., `'user*'`, `'user:*:profile'`).
-- **Callback**: A function that is called whenever data matching the filter changes.
 
 ### Closing the Connection
 
@@ -264,6 +295,10 @@ const eventbase = await createEventbase({
 
 #### Methods
 
+##### `insert(data: object): Promise<{ id: string; data: object }>`
+
+Stores data with an auto-generated ID.
+
 ##### `put(key: string, data: object): Promise<{ meta: MetaData; data: T }>`
 
 Stores data under the specified key.
@@ -280,17 +315,17 @@ Deletes the data associated with the specified key.
 
 Returns a list of keys matching the provided pattern (supports regex).
 
-##### `query(queryObject: object): Promise<object[]>`
+##### `query<T>(queryObject: object): Promise<T[]>`
 
 Queries the database using a complex query object.
 
 - **`queryObject`**: An object containing fields and operators to filter the records.
 
-##### `subscribe<T>(filter: string, callback: SubscriptionCallback<T>): () => void`
+##### `subscribe<T>(queryObject: object, callback: SubscriptionCallback<T>): () => void`
 
-Subscribes to changes on keys matching the filter. Returns an `unsubscribe` function.
+Subscribes to changes on keys matching the query object. Returns an `unsubscribe` function.
 
-- **`filter`**: String pattern to match keys (e.g., `'user*'`).
+- **`queryObject`**: An object containing fields and operators to filter the records.
 - **`callback`**: Function called with `(key, data, meta, event)` whenever a matching key changes.
 
 ##### `close(): Promise<void>`
@@ -413,12 +448,29 @@ await manager.closeAll();
 Subscribe to changes on keys that match a complex pattern:
 
 ```javascript
-// Subscribe to all keys starting with 'user:' and ending with ':profile'
-const unsubscribe = eventbase.subscribe('user:*:profile', (key, data, meta, event) => {
-  console.log('Profile updated:', { key, data });
-});
+// Subscribe using query objects
+const unsubscribe = eventbase.subscribe(
+  {
+    type: 'user',
+    age: { $gte: 18 }
+  },
+  (key, data, meta, event) => {
+    console.log('Change detected:', { key, data, meta, event });
+  }
+);
 
-// To unsubscribe later
+// Available query operators:
+// $lt, $lte, $gt, $gte - Compare numbers
+// $eq, $ne - Compare any value
+// $in, $nin - Check if value is in array
+// $regex - Match string against regular expression
+
+// Examples:
+eventbase.subscribe({ age: { $lt: 18 } }, callback); // age less than 18
+eventbase.subscribe({ status: { $in: ['active', 'pending'] } }, callback); // status is active or pending
+eventbase.subscribe({ name: { $regex: '^John' } }, callback); // name starts with John
+
+// To unsubscribe
 unsubscribe();
 ```
 
