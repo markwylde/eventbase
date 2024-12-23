@@ -103,7 +103,7 @@ export async function createEventbase(config: EventbaseConfig) {
         timestamp: start,
         duration: Date.now() - start
       });
-      return result ? { meta: await metaDb.read(id), data: result } : null;
+      return result ? { meta: await metaDb.read(id) as MetaData, data: result as T } : null;
     },
 
     put: async <T extends object>(id: string, data: T) => {
@@ -150,7 +150,7 @@ export async function createEventbase(config: EventbaseConfig) {
 
       const start = Date.now();
       updateLastAccessed();
-      const result = await db.filter('id', v => v.match(pattern));
+      const result = await db.filter('id', (v: string) => v.match(pattern));
       await publishStats({
         operation: 'KEYS',
         pattern,
@@ -199,10 +199,9 @@ export async function createEventbase(config: EventbaseConfig) {
 
       const start = Date.now();
       updateLastAccessed();
-      const result = await db.query(queryObject);
+      const result = await db.query(queryObject as any);
       await publishStats({
         operation: 'QUERY',
-        query: queryObject,
         timestamp: start,
         duration: Date.now() - start
       });
@@ -336,7 +335,7 @@ async function updateMetaData(
 ): Promise<void> {
   let meta: MetaData;
   try {
-    meta = await metaDb.read(id);
+    meta = await metaDb.read(id) as MetaData;
     if (!meta) {
       meta = { dateCreated: time, dateModified: time, changes: 1 };
     } else {
@@ -388,9 +387,9 @@ async function get<T extends object>(
   metaDb: DoubleDb
 ): Promise<{ meta: MetaData; data: T } | null> {
   const data = await db.read(id);
-  const meta = await metaDb.read(id);
+  const meta = await metaDb.read(id) as MetaData;
   if (data === undefined || meta === undefined) return null;
-  return { meta, data };
+  return { meta: meta as MetaData, data: data as T };
 }
 
 async function put<T extends object>(
@@ -462,7 +461,7 @@ async function del(
 }
 
 async function keys(pattern: string, db: DoubleDb) {
-  const keys = await db.filter('id', v => v.match(pattern));
+  const keys = await db.filter('id', (v: string) => v.match(pattern));
   return keys.map(record => record.id);
 }
 
