@@ -446,6 +446,9 @@ function evaluateCondition(value: any, condition: any): boolean {
         case '$regex':
           if (!(new RegExp(operand as string).test(value))) return false;
           break;
+        case '$sw':
+          if (!(value.startsWith(operand as string))) return false;
+          break;
         default:
           return false;
       }
