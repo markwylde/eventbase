@@ -6,6 +6,17 @@ import { v4 as uuidv4 } from 'uuid';
 
 const base64encode = (str: string) => Buffer.from(str).toString('base64');
 
+type QueryOptions = {
+  limit?: number;
+  offset?: number;
+  sort?: {
+    [key: string]: 1 | -1
+  };
+  project?: {
+    [key: string]: 1
+  }
+}
+
 type Stream = {
   waitUntilReady: () => Promise<void>;
   stop: () => Promise<void>;
@@ -219,14 +230,14 @@ export async function createEventbase(config: EventbaseConfig) {
       };
     },
 
-    query: async <T extends object>(queryObject: object): Promise<T[]> => {
+    query: async <T extends object>(queryObject: object, options: QueryOptions): Promise<T[]> => {
       if (instance.closed) {
         throw new Error('instance is closed');
       }
 
       const start = Date.now();
       updateLastAccessed();
-      const result = await db.query(queryObject as any);
+      const result = await db.query(queryObject as any, options as any);
       await publishStats({
         operation: 'QUERY',
         timestamp: start,
