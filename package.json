@@ -31,7 +31,7 @@
   "dependencies": {
     "@nats-io/jetstream": "^3.0.0-35",
     "@nats-io/transport-node": "^3.0.0-33",
-    "doubledb": "^3.2.0",
+    "doubledb": "^3.3.0",
     "level": "^9.0.0"
   },
   "devDependencies": {
