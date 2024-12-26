@@ -230,7 +230,7 @@ export async function createEventbase(config: EventbaseConfig) {
       };
     },
 
-    query: async <T extends object>(queryObject: object, options: QueryOptions): Promise<T[]> => {
+    query: async <T extends object>(queryObject: object, options?: QueryOptions): Promise<T[]> => {
       if (instance.closed) {
         throw new Error('instance is closed');
       }
