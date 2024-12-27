@@ -30,8 +30,8 @@ export interface MetaData {
 
 type SubscriptionCallback<T extends object> = (
   key: string,
-  data: T | null,
-  meta: MetaData | null,
+  data: T,
+  meta: MetaData,
   event: Event
 ) => void;
 
@@ -75,14 +75,10 @@ export async function createEventbase(config: EventbaseConfig) {
 
   const publishStats = async (statsEvent: StatsEvent) => {
     if (stats?.js && config.statsStreamName) {
-      try {
-        await stats.js.publish(
-          `${config.statsStreamName}.stats`,
-          JSON.stringify(statsEvent)
-        );
-      } catch (err) {
-        console.error('Error publishing stats:', err);
-      }
+      await stats.js.publish(
+        `${config.statsStreamName}.stats`,
+        JSON.stringify(statsEvent)
+      );
     }
   };
 
@@ -194,7 +190,7 @@ export async function createEventbase(config: EventbaseConfig) {
         timestamp: start,
         duration: Date.now() - start
       });
-      return result.map(record => record.id);
+      return result.map(record => record.id as string);
     },
 
     subscribe: <T extends object>(query: SubscriptionQuery, callback: SubscriptionCallback<T>) => {
@@ -399,12 +395,15 @@ function notifySubscribers<T>(
   subscriptions: Map<SubscriptionQuery, SubscriptionCallback<any>[]>,
   publishStats: (statsEvent: StatsEvent) => Promise<void>
 ) {
+  if (!data) {
+    return;
+  }
   for (const [queryKey, callbacks] of subscriptions.entries()) {
     const query = JSON.parse(queryKey as unknown as string);
     if (event.type === 'DELETE' || queryMatchesData(query, data?.data)) {
       const start = Date.now();
-      const eventData = event.type === 'DELETE' ? event.oldData : data?.data;
-      callbacks.forEach((callback) => callback(key, eventData, data?.meta || null, event));
+      const eventData = event.type === 'DELETE' ? event.oldData : data.data;
+      callbacks.forEach((callback) => callback(key, eventData, data.meta, event));
       publishStats({
         operation: 'SUBSCRIBE_EMIT',
         id: key,
@@ -503,7 +502,7 @@ async function put<T extends object>(
     JSON.stringify(event)
   );
 
-  const processedSeq = await waitForStream(msg.seq);
+  await waitForStream(msg.seq);
 
   const result = await get<T>(id, db, metaDb);
   if (result === null) {
