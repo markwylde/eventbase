@@ -322,7 +322,7 @@ async function replayEvents(
         } else if (event.type === 'DELETE') {
           await db.remove(event.id).catch(() => {});
           await metaDb.remove(event.id).catch(() => {});
-          notifySubscribers(event, event.id, null, subscriptions, publishStats);
+          notifySubscribers(event, event.id, event.oldData, subscriptions, publishStats);
         }
 
         // Resolve all waiters for this sequence and lower
