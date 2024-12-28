@@ -236,6 +236,8 @@ export async function createEventbase(config: EventbaseConfig) {
       const result = await db.query(queryObject as any, options as any);
       await publishStats({
         operation: 'QUERY',
+        query: queryObject,
+        queryResultCount: result.length,
         timestamp: start,
         duration: Date.now() - start
       });
