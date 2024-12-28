@@ -20,6 +20,8 @@ export type StatsEvent = {
   operation: 'GET' | 'QUERY' |  'PUT' | 'DELETE' | 'KEYS' | 'SUBSCRIBE' | 'SUBSCRIBE_EMIT';
   id?: string;
   pattern?: string;
+  query?: object;
+  queryResultCount?: number;
   timestamp: number;
   duration: number;
 };

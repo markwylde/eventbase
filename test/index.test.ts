@@ -151,7 +151,33 @@ describe('Eventbase with Stats', async () => {
     subscription();
   });
 
-  // Your original tests can continue from here
+  test('should publish stats events for query operation with query details', async () => {
+    // Setup some test data
+    await eventbase1.put('person1', { firstName: 'Joe', lastName: 'Smith' });
+    await eventbase1.put('person2', { firstName: 'Joe', lastName: 'Brown' });
+    await eventbase1.put('person3', { firstName: 'Jane', lastName: 'Doe' });
+
+    // Clear previous stats events
+    statsEvents = [];
+
+    // Perform the query
+    const queryObject = { firstName: { $eq: 'Joe' } };
+    const result = await eventbase1.query(queryObject);
+
+    // Wait for stats event to be published
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    // Verify stats event
+    assert.equal(statsEvents.length, 1);
+    const statsEvent = statsEvents[0];
+
+    assert.equal(statsEvent.operation, 'QUERY');
+    assert.deepEqual(statsEvent.query, queryObject);
+    assert.equal(statsEvent.queryResultCount, 2);
+    assert.ok(typeof statsEvent.timestamp === 'number');
+    assert.ok(typeof statsEvent.duration === 'number');
+  });
+
   test('should store and retrieve data with metadata', async () => {
     const testData = { name: 'John Doe', age: 30 };
     await eventbase1.put('user1', testData);
