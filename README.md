@@ -319,6 +319,10 @@ Returns a list of keys matching the provided pattern (supports regex).
 
 Queries the database using a complex query object.
 
+##### `count(queryObject: object): Promise<number>`
+
+Queries the database using a complex query object returning the document count.
+
 - **`queryObject`**: An object containing fields and operators to filter the records.
 
 ##### `subscribe<T>(queryObject: object, callback: SubscriptionCallback<T>): () => void`

@@ -244,6 +244,23 @@ export async function createEventbase(config: EventbaseConfig) {
       return result as T[];
     },
 
+    count: async (queryObject: object): Promise<number> => {
+      if (instance.closed) {
+        throw new Error('instance is closed');
+      }
+
+      const start = Date.now();
+      updateLastAccessed();
+      const result = await db.count(queryObject as any);
+      await publishStats({
+        operation: 'QUERY',
+        query: queryObject,
+        timestamp: start,
+        duration: Date.now() - start
+      });
+      return result;
+    },
+
     getLastAccessed: () => lastAccessed,
     getActiveSubscriptions: () => activeSubscriptions,
 
