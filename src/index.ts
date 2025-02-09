@@ -3,7 +3,7 @@ import createDoubledb, { DoubleDb } from 'doubledb';
 import { EventbaseNats, setupNats } from './nats.js';
 import { JetStreamClient, JetStreamManager } from '@nats-io/jetstream';
 import { v4 as uuidv4 } from 'uuid';
-import { rmdir } from 'fs/promises';
+import { rm } from 'fs/promises';
 
 const base64encode = (str: string) => Buffer.from(str).toString('base64');
 
@@ -279,7 +279,7 @@ export async function createEventbase(config: EventbaseConfig) {
         settingsDb.close()
       ]);
 
-      await rmdir(config.dbPath || './data', { recursive: true });
+      await rm(config.dbPath || './data', { recursive: true });
     },
 
     close: async () => {
