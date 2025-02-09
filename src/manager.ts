@@ -1,4 +1,3 @@
-// manager.ts
 import { EventEmitter } from 'events';
 import { createEventbase } from './index.js';
 import type { EventbaseConfig } from './types.js';

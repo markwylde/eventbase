@@ -29,14 +29,14 @@
   "license": "MIT",
   "description": "",
   "dependencies": {
-    "@nats-io/jetstream": "^3.0.0-35",
-    "@nats-io/transport-node": "^3.0.0-33",
-    "doubledb": "^3.4.1",
+    "@nats-io/jetstream": "^3.0.0-37",
+    "@nats-io/transport-node": "^3.0.0-35",
+    "doubledb": "^3.4.2",
     "level": "^9.0.0"
   },
   "devDependencies": {
-    "@types/node": "^22.10.2",
+    "@types/node": "^22.13.1",
     "tsx": "^4.19.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.3"
   }
 }

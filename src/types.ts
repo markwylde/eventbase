@@ -1,4 +1,7 @@
 import { ConnectionOptions } from "@nats-io/transport-node";
+import createEventbase from ".";
+
+export type EventbaseInstance = Awaited<ReturnType<typeof createEventbase>>;
 
 export type EventbaseConfig = {
   statsStreamName?: string;
