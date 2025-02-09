@@ -445,4 +445,29 @@ describe('Eventbase with Stats', async () => {
 
     assert.deepEqual(result, expectedResult);
   });
+
+  test('should delete the stream', async () => {
+    await eventbase1.put('user1', { name: 'Jane Doe' });
+    await eventbase1.put('user2', { name: 'Jane Doe' });
+    await eventbase1.put('user3', { name: 'Jane Doe' });
+
+    await eventbase1.deleteStream();
+
+    const eb = await createEventbase({
+      dbPath: './test-data/' + streamName + '-node1',
+      nats: {
+        servers: ['localhost:4222'],
+        user: 'a',
+        pass: 'a',
+      },
+      streamName,
+      statsStreamName,
+    })
+
+    const user1 = await eb.get('user1')
+
+    assert.equal(user1, null)
+
+    eb.close();
+  });
 });
