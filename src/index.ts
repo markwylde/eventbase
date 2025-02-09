@@ -216,6 +216,9 @@ export async function createEventbase(config: EventbaseConfig) {
 
       return () => {
         const callbacks = subscriptions.get(queryKey as unknown as SubscriptionQuery)!;
+        if (!callbacks) {
+          return;
+        }
         const index = callbacks.indexOf(callback as SubscriptionCallback<any>);
         if (index !== -1) {
           callbacks.splice(index, 1);
