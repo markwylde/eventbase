@@ -3,6 +3,7 @@ import createDoubledb, { DoubleDb } from 'doubledb';
 import { EventbaseNats, setupNats } from './nats.js';
 import { JetStreamClient, JetStreamManager } from '@nats-io/jetstream';
 import { v4 as uuidv4 } from 'uuid';
+import { rmdir } from 'fs/promises';
 
 const base64encode = (str: string) => Buffer.from(str).toString('base64');
 
@@ -264,6 +265,20 @@ export async function createEventbase(config: EventbaseConfig) {
     getLastAccessed: () => lastAccessed,
     getActiveSubscriptions: () => activeSubscriptions,
 
+    deleteStream: async () => {
+      await jsm.streams.purge(config.streamName);
+      await jsm.streams.delete(config.streamName);
+      await instance.close();
+
+      await Promise.all([
+        db.close(),
+        metaDb.close(),
+        settingsDb.close()
+      ]);
+
+      await rmdir(config.dbPath || './data', { recursive: true });
+    },
+
     close: async () => {
       instance.closed = true;
       await stream.stop();
@@ -374,9 +389,11 @@ async function replayEvents(
   return {
     waitUntilReady: () => readyPromise,
     stop: async () => {
-      await messages.close();
-      await processing;
-      await consumer.delete();
+      try {
+        await messages.close();
+        await processing;
+        await consumer.delete();
+      } catch (error) {}
     },
   };
 }
